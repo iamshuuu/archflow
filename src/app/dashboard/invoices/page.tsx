@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { trpc } from "@/app/providers";
 import {
     Plus,
     Search,
@@ -43,22 +44,6 @@ interface Invoice {
 
 /* ─── Data ─── */
 
-const clients = [
-    { name: "Apex Development Corp", projects: ["Meridian Tower"] },
-    { name: "Coastal Properties LLC", projects: ["Harbor Residences"] },
-    { name: "City of Portland", projects: ["Civic Center"] },
-    { name: "Metro Commercial Group", projects: ["Park View Office"] },
-    { name: "Urban Living Co.", projects: ["Riverside Lofts"] },
-];
-
-const seedInvoices: Invoice[] = [
-    { id: "inv1", number: "INV-2026-001", client: "Apex Development Corp", project: "Meridian Tower", amount: 28500, date: "2026-02-01", dueDate: "2026-03-03", status: "paid", lineItems: [{ description: "Construction Docs — Jan 2026", qty: 152, rate: 175 }, { description: "Reimbursable expenses", qty: 1, rate: 1900 }] },
-    { id: "inv2", number: "INV-2026-002", client: "Coastal Properties LLC", project: "Harbor Residences", amount: 18900, date: "2026-02-01", dueDate: "2026-03-03", status: "overdue", lineItems: [{ description: "Design Development — Jan 2026", qty: 108, rate: 175 }] },
-    { id: "inv3", number: "INV-2026-003", client: "City of Portland", project: "Civic Center", amount: 12400, date: "2026-02-10", dueDate: "2026-03-12", status: "sent", lineItems: [{ description: "Schematic Design — progress billing", qty: 1, rate: 12400 }] },
-    { id: "inv4", number: "INV-2026-004", client: "Metro Commercial Group", project: "Park View Office", amount: 35000, date: "2026-02-12", dueDate: "2026-03-14", status: "draft", lineItems: [{ description: "SD Phase — milestone 1", qty: 1, rate: 35000 }] },
-    { id: "inv5", number: "INV-2026-005", client: "Urban Living Co.", project: "Riverside Lofts", amount: 8200, date: "2026-02-14", dueDate: "2026-03-16", status: "viewed", lineItems: [{ description: "CA — Feb site visits", qty: 4, rate: 2050 }] },
-];
-
 const formatCurrency = (v: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(v);
 
 const statusConfig: Record<InvoiceStatus, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
@@ -79,15 +64,39 @@ const fieldStyle: React.CSSProperties = { width: "100%", padding: "10px 12px", b
    ════════════════════════════════════════════════════ */
 
 export default function InvoicesPage() {
-    const [invoiceList, setInvoiceList] = useState<Invoice[]>(seedInvoices);
+    const { data: rawInvoices = [], isLoading } = trpc.invoice.list.useQuery();
+    const { data: dbClients = [] } = trpc.project.clients.useQuery();
+    const { data: dbProjects = [] } = trpc.project.list.useQuery();
+    const utils = trpc.useUtils();
+    const createMutation = trpc.invoice.create.useMutation({ onSuccess: () => utils.invoice.list.invalidate() });
+    const updateStatusMutation = trpc.invoice.updateStatus.useMutation({ onSuccess: () => utils.invoice.list.invalidate() });
+
+    // Adapt DB invoices to UI shape
+    const invoiceList: Invoice[] = rawInvoices.map((inv: any) => ({
+        id: inv.id,
+        number: inv.number,
+        client: inv.client?.name || "Unknown",
+        project: inv.project?.name || "—",
+        amount: inv.amount,
+        date: inv.date || "",
+        dueDate: inv.dueDate || "",
+        status: (inv.status || "draft") as InvoiceStatus,
+        lineItems: (inv.lineItems || []).map((li: any) => ({ description: li.description, qty: li.qty, rate: li.rate })),
+    }));
+
+    const clients = dbClients.map((c: any) => ({
+        id: c.id, name: c.name,
+        projects: dbProjects.filter((p: any) => p.clientId === c.id).map((p: any) => ({ id: p.id, name: p.name })),
+    }));
+
     const [filter, setFilter] = useState<string>("all");
     const [search, setSearch] = useState("");
     const [previewId, setPreviewId] = useState<string | null>(null);
     const [showCreate, setShowCreate] = useState(false);
 
     // Create invoice form state
-    const [newClient, setNewClient] = useState("");
-    const [newProject, setNewProject] = useState("");
+    const [newClientId, setNewClientId] = useState("");
+    const [newProjectId, setNewProjectId] = useState("");
     const [newDate, setNewDate] = useState(new Date().toISOString().split("T")[0]);
     const [newDueDate, setNewDueDate] = useState("");
     const [newLines, setNewLines] = useState<LineItem[]>([{ description: "", qty: 1, rate: 0 }]);
@@ -104,25 +113,27 @@ export default function InvoicesPage() {
 
     const previewInvoice = previewId ? invoiceList.find((i) => i.id === previewId) : null;
 
-    const selectedClientObj = clients.find((c) => c.name === newClient);
+    const selectedClientObj = clients.find((c: any) => c.id === newClientId);
     const newTotal = newLines.reduce((s, li) => s + li.qty * li.rate, 0);
+
+    if (isLoading) return <div style={{ padding: "80px 0", textAlign: "center" }}><p style={{ fontSize: "14px", color: "var(--text-muted)", fontWeight: 300 }}>Loading invoices...</p></div>;
 
     /* ─── Actions ─── */
 
     const resetCreateForm = () => {
-        setNewClient(""); setNewProject(""); setNewDate(new Date().toISOString().split("T")[0]); setNewDueDate("");
+        setNewClientId(""); setNewProjectId(""); setNewDate(new Date().toISOString().split("T")[0]); setNewDueDate("");
         setNewLines([{ description: "", qty: 1, rate: 0 }]);
     };
 
     const handleCreateInvoice = () => {
-        if (!newClient || !newProject || newLines.every((l) => !l.description)) return;
-        const num = `INV-2026-${String(invoiceList.length + 1).padStart(3, "0")}`;
-        const inv: Invoice = {
-            id: `inv-${Date.now()}`, number: num, client: newClient, project: newProject,
-            amount: newTotal, date: newDate, dueDate: newDueDate || newDate,
-            status: "draft", lineItems: newLines.filter((l) => l.description),
-        };
-        setInvoiceList((prev) => [inv, ...prev]);
+        if (!newClientId || !newProjectId || newLines.every((l) => !l.description)) return;
+        createMutation.mutate({
+            clientId: newClientId,
+            projectId: newProjectId,
+            date: newDate,
+            dueDate: newDueDate || newDate,
+            lineItems: newLines.filter((l) => l.description),
+        });
         setShowCreate(false);
         resetCreateForm();
     };
@@ -344,18 +355,18 @@ export default function InvoicesPage() {
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "18px" }}>
                                 <div>
                                     <label style={labelStyle}>Client</label>
-                                    <select value={newClient} onChange={(e) => { setNewClient(e.target.value); const cl = clients.find((c) => c.name === e.target.value); if (cl) setNewProject(cl.projects[0]); else setNewProject(""); }}
+                                    <select value={newClientId} onChange={(e) => { setNewClientId(e.target.value); const cl = clients.find((c: any) => c.id === e.target.value); if (cl && cl.projects.length > 0) setNewProjectId(cl.projects[0].id); else setNewProjectId(""); }}
                                         style={{ ...fieldStyle, cursor: "pointer" }}>
                                         <option value="">Select client…</option>
-                                        {clients.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+                                        {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                                     </select>
                                 </div>
                                 <div>
                                     <label style={labelStyle}>Project</label>
-                                    <select value={newProject} onChange={(e) => setNewProject(e.target.value)} disabled={!newClient}
-                                        style={{ ...fieldStyle, cursor: newClient ? "pointer" : "not-allowed", opacity: newClient ? 1 : 0.5 }}>
+                                    <select value={newProjectId} onChange={(e) => setNewProjectId(e.target.value)} disabled={!newClientId}
+                                        style={{ ...fieldStyle, cursor: newClientId ? "pointer" : "not-allowed", opacity: newClientId ? 1 : 0.5 }}>
                                         <option value="">Select project…</option>
-                                        {(selectedClientObj?.projects || []).map((p) => <option key={p} value={p}>{p}</option>)}
+                                        {(selectedClientObj?.projects || []).map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
                                     </select>
                                 </div>
                             </div>
@@ -445,8 +456,8 @@ export default function InvoicesPage() {
                                     Cancel
                                 </button>
                                 <button onClick={handleCreateInvoice}
-                                    disabled={!newClient || !newProject || newLines.every((l) => !l.description)}
-                                    style={{ padding: "11px 24px", borderRadius: "6px", border: "none", background: (!newClient || !newProject) ? "var(--bg-tertiary)" : "var(--accent-primary)", color: (!newClient || !newProject) ? "var(--text-muted)" : "white", fontSize: "13px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", cursor: (!newClient || !newProject) ? "not-allowed" : "pointer", transition: "all 0.2s" }}>
+                                    disabled={!newClientId || !newProjectId || newLines.every((l) => !l.description)}
+                                    style={{ padding: "11px 24px", borderRadius: "6px", border: "none", background: (!newClientId || !newProjectId) ? "var(--bg-tertiary)" : "var(--accent-primary)", color: (!newClientId || !newProjectId) ? "var(--text-muted)" : "white", fontSize: "13px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", cursor: (!newClientId || !newProjectId) ? "not-allowed" : "pointer", transition: "all 0.2s" }}>
                                     Create Invoice
                                 </button>
                             </div>

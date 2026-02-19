@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useSession, signOut } from "next-auth/react";
 import {
     LayoutDashboard,
     FolderKanban,
@@ -41,7 +42,34 @@ export default function DashboardLayout({
     children: React.ReactNode;
 }) {
     const pathname = usePathname();
+    const router = useRouter();
+    const { data: session, status } = useSession();
     const [collapsed, setCollapsed] = useState(false);
+
+    // Redirect to login if not authenticated
+    if (status === "unauthenticated") {
+        router.push("/login");
+        return null;
+    }
+
+    // Loading state
+    if (status === "loading") {
+        return (
+            <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)" }}>
+                <div style={{ textAlign: "center" }}>
+                    <div style={{ width: "32px", height: "32px", borderRadius: "4px", border: "1.5px solid var(--accent-primary)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 21L12 3L21 21" /><path d="M7.5 14h9" />
+                        </svg>
+                    </div>
+                    <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>Loading...</p>
+                </div>
+            </div>
+        );
+    }
+
+    const userName = session?.user?.name || "User";
+    const userInitials = userName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
 
     const isActive = (href: string) => {
         if (href === "/dashboard") return pathname === "/dashboard";
@@ -219,15 +247,15 @@ export default function DashboardLayout({
                         }}
                     >
                         <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: "var(--accent-primary)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "11px", fontWeight: 500, flexShrink: 0 }}>
-                            KS
+                            {userInitials}
                         </div>
                         {!collapsed && (
                             <div style={{ flex: 1, overflow: "hidden" }}>
-                                <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Karan S.</p>
-                                <p style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 300 }}>Principal</p>
+                                <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{userName}</p>
+                                <p style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 300 }}>{(session?.user as any)?.role || "Member"}</p>
                             </div>
                         )}
-                        {!collapsed && <LogOut size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
+                        {!collapsed && <LogOut size={14} style={{ color: "var(--text-muted)", flexShrink: 0, cursor: "pointer" }} onClick={() => signOut({ callbackUrl: "/login" })} />}
                     </div>
                 </div>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { trpc } from "@/app/providers";
 import {
     ChevronLeft,
     ChevronRight,
@@ -41,29 +42,11 @@ interface TimesheetRow {
 
 /* ─── Data ─── */
 
-const allProjects: ProjectOption[] = [
-    { id: "p1", name: "Meridian Tower", phases: ["Pre-Design", "Schematic Design", "Design Development", "Construction Docs", "Construction Admin"] },
-    { id: "p2", name: "Harbor Residences", phases: ["Pre-Design", "Schematic Design", "Design Development", "Construction Docs"] },
-    { id: "p3", name: "Civic Center Renovation", phases: ["Schematic Design", "Design Development"] },
-    { id: "p4", name: "Park View Office Complex", phases: ["SD Phase", "DD Phase"] },
-    { id: "p5", name: "Riverside Lofts", phases: ["Construction Admin"] },
-    { id: "p6", name: "Oakwood Elementary", phases: ["Design Development"] },
-];
-
 const weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const initialRows: TimesheetRow[] = [
-    { id: "r1", projectId: "p1", projectName: "Meridian Tower", phase: "Construction Docs", hours: [8, 6, 7, 8, 4, 0, 0], notes: ["", "", "", "", "", "", ""] },
-    { id: "r2", projectId: "p2", projectName: "Harbor Residences", phase: "Design Development", hours: [0, 2, 1, 0, 3, 0, 0], notes: ["", "", "", "", "", "", ""] },
-    { id: "r3", projectId: "p3", projectName: "Civic Center Renovation", phase: "Schematic Design", hours: [0, 0, 0, 0, 1, 0, 0], notes: ["", "", "", "", "", "", ""] },
-];
+const initialRows: TimesheetRow[] = [];
 
-const previousTimesheets = [
-    { week: "Feb 3 – Feb 9, 2026", hours: 42, billable: 38, status: "approved" as TimesheetStatus },
-    { week: "Jan 27 – Feb 2, 2026", hours: 38.5, billable: 35, status: "approved" as TimesheetStatus },
-    { week: "Jan 20 – Jan 26, 2026", hours: 40, billable: 36.5, status: "approved" as TimesheetStatus },
-    { week: "Jan 13 – Jan 19, 2026", hours: 41, billable: 37, status: "approved" as TimesheetStatus },
-];
+const previousTimesheets: { week: string; hours: number; billable: number; status: TimesheetStatus }[] = [];
 
 const statusConfig: Record<TimesheetStatus, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
     draft: { label: "Draft", color: "var(--text-muted)", bg: "var(--bg-secondary)", icon: <Clock size={11} /> },
@@ -98,6 +81,19 @@ const formatTimer = (totalSec: number) => {
    ════════════════════════════════════════════════════ */
 
 export default function TimePage() {
+    /* ─── tRPC data ─── */
+    const { data: rawProjects = [] } = trpc.project.list.useQuery();
+    const allProjects: ProjectOption[] = rawProjects.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        phases: (p.phases || []).map((ph: any) => ph.name),
+    }));
+    // Fallback to default phases if no phases in DB
+    const getProjectPhases = (projId: string) => {
+        const proj = allProjects.find(p => p.id === projId);
+        return proj?.phases?.length ? proj.phases : ["General"];
+    };
+
     /* ─── State ─── */
     const [rows, setRows] = useState<TimesheetRow[]>(initialRows);
     const [weekOffset, setWeekOffset] = useState(0);

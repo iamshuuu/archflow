@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Eye, EyeOff, ArrowRight, Check } from "lucide-react";
+import { signIn } from "next-auth/react";
 
 export default function SignupPage() {
     const [showPassword, setShowPassword] = useState(false);
@@ -13,6 +14,7 @@ export default function SignupPage() {
         password: "",
     });
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
 
     const update = (k: string, v: string) =>
         setFormData((prev) => ({ ...prev, [k]: v }));
@@ -26,10 +28,20 @@ export default function SignupPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
-        // TODO: connect to NextAuth
-        setTimeout(() => {
+        setError("");
+        try {
+            const res = await fetch("/api/auth/signup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: formData.fullName, email: formData.email, password: formData.password }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setError(data.error || "Signup failed"); setLoading(false); return; }
+            // Auto-login after signup
+            const signInRes = await signIn("credentials", { email: formData.email, password: formData.password, redirect: false });
+            if (signInRes?.error) { setError("Account created but login failed. Try signing in."); setLoading(false); return; }
             window.location.href = "/dashboard";
-        }, 800);
+        } catch { setError("Something went wrong"); setLoading(false); }
     };
 
     const inputStyle: React.CSSProperties = {
@@ -170,6 +182,11 @@ export default function SignupPage() {
                         <div style={{ flex: 1, height: "1px", background: "var(--border-primary)" }} />
                     </div>
 
+                    {error && (
+                        <div style={{ padding: "12px 14px", borderRadius: "6px", background: "rgba(176,80,64,0.08)", border: "1px solid rgba(176,80,64,0.2)", color: "var(--danger)", fontSize: "13px", fontWeight: 400, marginBottom: "4px" }}>
+                            {error}
+                        </div>
+                    )}
                     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                             <div>

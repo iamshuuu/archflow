@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { trpc } from "@/app/providers";
 import {
     DollarSign,
     TrendingUp,
@@ -33,38 +34,7 @@ interface ProjectBudget {
     phases: PhaseBudget[];
 }
 
-const projects: ProjectBudget[] = [
-    {
-        id: "p1", name: "Meridian Tower", client: "Apex Development Corp", contractValue: 285000, totalEarned: 218000, totalBudgetHours: 1720, totalUsedHours: 1210,
-        phases: [
-            { name: "Pre-Design", feeType: "fixed", fee: 18000, earned: 18000, hoursbudget: 120, hoursUsed: 115, status: "complete" },
-            { name: "Schematic Design", feeType: "fixed", fee: 45000, earned: 45000, hoursbudget: 280, hoursUsed: 295, status: "complete" },
-            { name: "Design Development", feeType: "fixed", fee: 65000, earned: 65000, hoursbudget: 400, hoursUsed: 388, status: "complete" },
-            { name: "Construction Docs", feeType: "fixed", fee: 95000, earned: 62000, hoursbudget: 600, hoursUsed: 412, status: "on-track" },
-            { name: "Construction Admin", feeType: "hourly", fee: 62000, earned: 0, hoursbudget: 320, hoursUsed: 0, status: "on-track" },
-        ],
-    },
-    {
-        id: "p2", name: "Harbor Residences", client: "Coastal Properties LLC", contractValue: 420000, totalEarned: 145000, totalBudgetHours: 1280, totalUsedHours: 421,
-        phases: [
-            { name: "Pre-Design", feeType: "fixed", fee: 15000, earned: 15000, hoursbudget: 80, hoursUsed: 76, status: "complete" },
-            { name: "Schematic Design", feeType: "fixed", fee: 40000, earned: 40000, hoursbudget: 200, hoursUsed: 210, status: "complete" },
-            { name: "Design Development", feeType: "fixed", fee: 60000, earned: 27000, hoursbudget: 300, hoursUsed: 135, status: "at-risk" },
-            { name: "Construction Docs", feeType: "nte", fee: 155000, earned: 0, hoursbudget: 500, hoursUsed: 0, status: "on-track" },
-            { name: "Construction Admin", feeType: "hourly", fee: 50000, earned: 0, hoursbudget: 200, hoursUsed: 0, status: "on-track" },
-        ],
-    },
-    {
-        id: "p3", name: "Civic Center", client: "City of Portland", contractValue: 175000, totalEarned: 142000, totalBudgetHours: 820, totalUsedHours: 685,
-        phases: [
-            { name: "Pre-Design", feeType: "fixed", fee: 12000, earned: 12000, hoursbudget: 60, hoursUsed: 55, status: "complete" },
-            { name: "Schematic Design", feeType: "fixed", fee: 30000, earned: 30000, hoursbudget: 160, hoursUsed: 172, status: "complete" },
-            { name: "Design Development", feeType: "fixed", fee: 48000, earned: 48000, hoursbudget: 260, hoursUsed: 278, status: "complete" },
-            { name: "Construction Docs", feeType: "fixed", fee: 55000, earned: 52000, hoursbudget: 240, hoursUsed: 180, status: "on-track" },
-            { name: "Construction Admin", feeType: "hourly", fee: 30000, earned: 0, hoursbudget: 100, hoursUsed: 0, status: "on-track" },
-        ],
-    },
-];
+
 
 const formatCurrency = (v: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(v);
 
@@ -76,13 +46,50 @@ const statusStyles: Record<string, { color: string; bg: string; label: string }>
 };
 
 export default function BudgetsPage() {
-    const [expanded, setExpanded] = useState<string | null>("p1");
+    const { data: rawProjects = [], isLoading } = trpc.project.budgets.useQuery();
+    const [expanded, setExpanded] = useState<string | null>(null);
+
+    // Adapt DB data to budget view shape
+    const projects: ProjectBudget[] = rawProjects.map((p: any) => {
+        const phases: PhaseBudget[] = (p.phases || []).map((ph: any) => {
+            const hoursUsed = (ph.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
+            const burnPct = ph.budgetHours > 0 ? hoursUsed / ph.budgetHours : 0;
+            const earned = Math.round(ph.budgetAmount * Math.min(burnPct, 1));
+            let status: PhaseBudget["status"] = "on-track";
+            if (burnPct >= 1.0) status = hoursUsed > 0 ? "over-budget" : "complete";
+            else if (burnPct >= 0.85) status = "at-risk";
+            return {
+                name: ph.name,
+                feeType: (ph.feeType === "not-to-exceed" ? "nte" : ph.feeType || "hourly") as PhaseBudget["feeType"],
+                fee: ph.budgetAmount || 0,
+                earned,
+                hoursbudget: ph.budgetHours || 0,
+                hoursUsed,
+                status,
+            };
+        });
+        return {
+            id: p.id,
+            name: p.name,
+            client: p.client?.name || "Unknown",
+            contractValue: p.contractValue || 0,
+            totalEarned: phases.reduce((s, ph) => s + ph.earned, 0),
+            totalBudgetHours: phases.reduce((s, ph) => s + ph.hoursbudget, 0),
+            totalUsedHours: phases.reduce((s, ph) => s + ph.hoursUsed, 0),
+            phases,
+        };
+    });
+
+    // Auto-expand first project
+    const effectiveExpanded = expanded ?? (projects.length > 0 ? projects[0].id : null);
 
     const totalContract = projects.reduce((s, p) => s + p.contractValue, 0);
     const totalEarned = projects.reduce((s, p) => s + p.totalEarned, 0);
     const totalHoursBudget = projects.reduce((s, p) => s + p.totalBudgetHours, 0);
     const totalHoursUsed = projects.reduce((s, p) => s + p.totalUsedHours, 0);
-    const overallBurnPct = Math.round((totalEarned / totalContract) * 100);
+    const overallBurnPct = totalContract > 0 ? Math.round((totalEarned / totalContract) * 100) : 0;
+
+    if (isLoading) return <div style={{ padding: "80px 0", textAlign: "center" }}><p style={{ fontSize: "14px", color: "var(--text-muted)", fontWeight: 300 }}>Loading budgets...</p></div>;
 
     return (
         <div>
@@ -115,7 +122,7 @@ export default function BudgetsPage() {
             {/* Budget breakdown by project */}
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 {projects.map((proj) => {
-                    const isExpanded = expanded === proj.id;
+                    const isExpanded = effectiveExpanded === proj.id;
                     const burnPct = Math.round((proj.totalEarned / proj.contractValue) * 100);
                     const hoursPct = Math.round((proj.totalUsedHours / proj.totalBudgetHours) * 100);
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { trpc } from "@/app/providers";
 import {
     Plus,
     Search,
@@ -33,15 +34,6 @@ interface TeamMember {
 
 /* ─── Data ─── */
 
-const seedMembers: TeamMember[] = [
-    { id: "t1", name: "Alex Chen", initials: "AC", email: "alex@studio.com", phone: "(503) 555-0101", role: "Admin", title: "Project Architect", costRate: 65, billRate: 175, targetUtil: 85, weeklyHours: [38.5, 41, 40, 42, 39, 38], projects: ["Meridian Tower", "Harbor Residences"] },
-    { id: "t2", name: "Maria Santos", initials: "MS", email: "maria@studio.com", phone: "(503) 555-0102", role: "Manager", title: "Design Lead", costRate: 70, billRate: 185, targetUtil: 80, weeklyHours: [40, 38, 42, 41, 40, 37], projects: ["Meridian Tower", "Civic Center", "Oakwood Elementary"] },
-    { id: "t3", name: "Jake Williams", initials: "JW", email: "jake@studio.com", phone: "(503) 555-0103", role: "Member", title: "Technical Lead", costRate: 60, billRate: 165, targetUtil: 85, weeklyHours: [35, 36, 38, 34, 32, 30], projects: ["Meridian Tower", "Riverside Lofts", "Maple Street"] },
-    { id: "t4", name: "Priya Patel", initials: "PP", email: "priya@studio.com", phone: "(503) 555-0104", role: "Manager", title: "Project Manager", costRate: 55, billRate: 155, targetUtil: 90, weeklyHours: [40, 42, 41, 40, 44, 40], projects: ["Harbor Residences", "Park View Office"] },
-    { id: "t5", name: "Sam Rogers", initials: "SR", email: "sam@studio.com", phone: "(503) 555-0105", role: "Member", title: "Design Architect", costRate: 50, billRate: 145, targetUtil: 85, weeklyHours: [32, 28, 36, 30, 34, 33], projects: ["Harbor Residences", "Riverside Lofts", "Park View Office"] },
-    { id: "t6", name: "Elena Vasquez", initials: "EV", email: "elena@studio.com", phone: "(503) 555-0106", role: "Member", title: "Junior Architect", costRate: 38, billRate: 110, targetUtil: 90, weeklyHours: [40, 40, 38, 41, 40, 39], projects: ["Civic Center"] },
-];
-
 const weekLabels = ["W1", "W2", "W3", "W4", "W5", "W6"];
 const roles = ["Admin", "Manager", "Member"];
 const titles = ["Principal", "Project Architect", "Design Lead", "Technical Lead", "Project Manager", "Design Architect", "Junior Architect", "Intern"];
@@ -56,7 +48,26 @@ const fieldStyle: React.CSSProperties = { width: "100%", padding: "10px 12px", b
    ════════════════════════════════════════════════════ */
 
 export default function TeamPage() {
-    const [members, setMembers] = useState<TeamMember[]>(seedMembers);
+    const { data: rawMembers = [], isLoading } = trpc.team.list.useQuery();
+    const utils = trpc.useUtils();
+    const createMutation = trpc.team.create.useMutation({ onSuccess: () => utils.team.list.invalidate() });
+
+    // Adapt DB users to UI shape
+    const members: TeamMember[] = rawMembers.map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        initials: m.name.split(" ").map((p: string) => p[0]).join("").toUpperCase().slice(0, 2),
+        email: m.email,
+        phone: m.phone || "",
+        role: m.role || "Member",
+        title: m.title || "",
+        costRate: m.costRate ?? 0,
+        billRate: m.billRate ?? 0,
+        targetUtil: m.targetUtil ?? 85,
+        weeklyHours: [0, 0, 0, 0, 0, 0],
+        projects: [],
+    }));
+
     const [search, setSearch] = useState("");
     const [view, setView] = useState<"directory" | "utilization">("directory");
     const [showAdd, setShowAdd] = useState(false);
@@ -101,10 +112,8 @@ export default function TeamPage() {
 
     const handleAdd = () => {
         if (!formName.trim() || !formEmail.trim() || !formTitle) return;
-        const member: TeamMember = {
-            id: `t-${Date.now()}`,
+        createMutation.mutate({
             name: formName.trim(),
-            initials: getInitials(formName),
             email: formEmail.trim(),
             phone: formPhone.trim(),
             role: formRole,
@@ -112,13 +121,12 @@ export default function TeamPage() {
             costRate: formCostRate,
             billRate: formBillRate,
             targetUtil: formTargetUtil,
-            weeklyHours: [0, 0, 0, 0, 0, 0],
-            projects: [],
-        };
-        setMembers((prev) => [...prev, member]);
+        });
         setShowAdd(false);
         resetForm();
     };
+
+    if (isLoading) return <div style={{ padding: "80px 0", textAlign: "center" }}><p style={{ fontSize: "14px", color: "var(--text-muted)", fontWeight: 300 }}>Loading team...</p></div>;
 
     return (
         <div>

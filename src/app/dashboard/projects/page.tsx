@@ -8,42 +8,15 @@ import {
     Filter,
     LayoutGrid,
     List,
-    ChevronDown,
     MoreHorizontal,
     ArrowUpRight,
     Calendar,
     Users,
     DollarSign,
 } from "lucide-react";
+import { trpc } from "@/app/providers";
 
 type ProjectStatus = "active" | "pipeline" | "on-hold" | "completed" | "archived";
-
-interface Project {
-    id: string;
-    name: string;
-    client: string;
-    type: string;
-    status: ProjectStatus;
-    phase: string;
-    progress: number;
-    budgetUsed: number;
-    contractValue: number;
-    startDate: string;
-    endDate: string;
-    team: string[];
-}
-
-const mockProjects: Project[] = [
-    { id: "p1", name: "Meridian Tower", client: "Apex Development Corp", type: "Commercial", status: "active", phase: "Construction Docs", progress: 72, budgetUsed: 85, contractValue: 285000, startDate: "2025-06-01", endDate: "2026-08-15", team: ["AC", "MS", "JW"] },
-    { id: "p2", name: "Harbor Residences", client: "Coastal Properties LLC", type: "Residential", status: "active", phase: "Design Development", progress: 45, budgetUsed: 102, contractValue: 420000, startDate: "2025-09-15", endDate: "2026-12-01", team: ["PP", "SR", "AC"] },
-    { id: "p3", name: "Civic Center Renovation", client: "City of Portland", type: "Civic", status: "active", phase: "Schematic Design", progress: 88, budgetUsed: 67, contractValue: 175000, startDate: "2025-03-01", endDate: "2026-03-30", team: ["MS", "JW"] },
-    { id: "p4", name: "Park View Office Complex", client: "Metro Commercial Group", type: "Commercial", status: "active", phase: "SD Phase", progress: 31, budgetUsed: 29, contractValue: 560000, startDate: "2025-11-01", endDate: "2027-06-01", team: ["AC", "PP", "SR", "MS"] },
-    { id: "p5", name: "Riverside Lofts", client: "Urban Living Co.", type: "Residential", status: "active", phase: "Construction Admin", progress: 95, budgetUsed: 91, contractValue: 195000, startDate: "2024-08-01", endDate: "2026-03-01", team: ["JW", "SR"] },
-    { id: "p6", name: "Westfield Library", client: "Westfield Township", type: "Civic", status: "pipeline", phase: "Proposal", progress: 0, budgetUsed: 0, contractValue: 320000, startDate: "2026-04-01", endDate: "2027-10-01", team: [] },
-    { id: "p7", name: "Summit Healthcare Center", client: "Summit Health Systems", type: "Healthcare", status: "pipeline", phase: "Proposal", progress: 0, budgetUsed: 0, contractValue: 480000, startDate: "2026-06-01", endDate: "2028-01-01", team: [] },
-    { id: "p8", name: "Oakwood Elementary", client: "District 42 Schools", type: "Education", status: "on-hold", phase: "Design Development", progress: 55, budgetUsed: 48, contractValue: 210000, startDate: "2025-01-15", endDate: "2026-09-01", team: ["MS"] },
-    { id: "p9", name: "Maple Street Townhomes", client: "Greenfield Homes", type: "Residential", status: "completed", phase: "Completed", progress: 100, budgetUsed: 94, contractValue: 165000, startDate: "2024-02-01", endDate: "2025-11-15", team: ["AC", "JW"] },
-];
 
 const statusConfig: Record<ProjectStatus, { label: string; color: string; bg: string }> = {
     active: { label: "Active", color: "var(--success)", bg: "rgba(90,122,70,0.08)" },
@@ -65,13 +38,31 @@ export default function ProjectsPage() {
     const [filterTypes, setFilterTypes] = useState<string[]>([]);
     const [activeRowMenu, setActiveRowMenu] = useState<string | null>(null);
 
-    const allTypes = Array.from(new Set(mockProjects.map((p) => p.type)));
+    const { data: rawProjects = [], isLoading } = trpc.project.list.useQuery();
+
+    // Adapt DB shape to UI shape
+    const projects = rawProjects.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        client: p.client?.name || "Unknown",
+        type: p.type || "Commercial",
+        status: (p.status || "active") as ProjectStatus,
+        phase: p.phases?.[0]?.name || p.phase || "—",
+        progress: p.progress ?? 0,
+        budgetUsed: p.budgetUsed ?? 0,
+        contractValue: p.contractValue ?? 0,
+        startDate: p.startDate || "",
+        endDate: p.endDate || "",
+        team: [] as string[],
+    }));
+
+    const allTypes = Array.from(new Set(projects.map((p: any) => p.type)));
 
     const toggleType = (t: string) => {
         setFilterTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]);
     };
 
-    const filtered = mockProjects.filter((p) => {
+    const filtered = projects.filter((p: any) => {
         if (statusFilter !== "all" && p.status !== statusFilter) return false;
         if (filterTypes.length > 0 && !filterTypes.includes(p.type)) return false;
         if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.client.toLowerCase().includes(search.toLowerCase())) return false;
@@ -79,12 +70,20 @@ export default function ProjectsPage() {
     });
 
     const statusCounts = {
-        all: mockProjects.length,
-        active: mockProjects.filter((p) => p.status === "active").length,
-        pipeline: mockProjects.filter((p) => p.status === "pipeline").length,
-        "on-hold": mockProjects.filter((p) => p.status === "on-hold").length,
-        completed: mockProjects.filter((p) => p.status === "completed").length,
+        all: projects.length,
+        active: projects.filter((p: any) => p.status === "active").length,
+        pipeline: projects.filter((p: any) => p.status === "pipeline").length,
+        "on-hold": projects.filter((p: any) => p.status === "on-hold").length,
+        completed: projects.filter((p: any) => p.status === "completed").length,
     };
+
+    if (isLoading) {
+        return (
+            <div style={{ padding: "80px 0", textAlign: "center" }}>
+                <p style={{ fontSize: "14px", color: "var(--text-muted)", fontWeight: 300 }}>Loading projects...</p>
+            </div>
+        );
+    }
 
     return (
         <div>
@@ -95,7 +94,7 @@ export default function ProjectsPage() {
                         Projects
                     </h1>
                     <p style={{ marginTop: "4px", fontSize: "14px", color: "var(--text-tertiary)", fontWeight: 300 }}>
-                        {mockProjects.length} projects · {statusCounts.active} active
+                        {projects.length} projects · {statusCounts.active} active
                     </p>
                 </div>
                 <button
@@ -191,8 +190,8 @@ export default function ProjectsPage() {
                             </tr>
                         </thead>
                         <tbody>
-                            {filtered.map((proj) => {
-                                const sc = statusConfig[proj.status];
+                            {filtered.map((proj: any) => {
+                                const sc = statusConfig[proj.status as ProjectStatus] || statusConfig.active;
                                 return (
                                     <tr key={proj.id} style={{ borderBottom: "1px solid var(--border-primary)", cursor: "pointer" }}
                                         onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
@@ -236,7 +235,7 @@ export default function ProjectsPage() {
                                             </button>
                                             {activeRowMenu === proj.id && (
                                                 <div style={{ position: "absolute", right: "14px", top: "42px", zIndex: 50, minWidth: "150px", background: "var(--bg-card)", borderRadius: "8px", border: "1px solid var(--border-secondary)", boxShadow: "0 8px 24px rgba(0,0,0,0.1)", padding: "4px", overflow: "hidden" }}>
-                                                    {["View Details", "Edit Project", "Archive", "Delete"].map((action, ai) => (
+                                                    {["View Details", "Edit Project", "Archive", "Delete"].map((action) => (
                                                         <button key={action} onClick={(e) => { e.stopPropagation(); setActiveRowMenu(null); }}
                                                             style={{ width: "100%", padding: "8px 12px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontSize: "12px", color: action === "Delete" ? "var(--danger)" : "var(--text-secondary)", borderRadius: "4px", transition: "background 0.1s" }}
                                                             onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
@@ -263,8 +262,8 @@ export default function ProjectsPage() {
             {/* Grid view */}
             {viewMode === "grid" && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
-                    {filtered.map((proj) => {
-                        const sc = statusConfig[proj.status];
+                    {filtered.map((proj: any) => {
+                        const sc = statusConfig[proj.status as ProjectStatus] || statusConfig.active;
                         return (
                             <Link key={proj.id} href={`/dashboard/projects/${proj.id}`} style={{ textDecoration: "none" }}>
                                 <div
@@ -301,12 +300,6 @@ export default function ProjectsPage() {
                                             <Calendar size={12} style={{ color: "var(--text-muted)" }} />
                                             <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: 400 }}>{proj.endDate}</span>
                                         </div>
-                                        {proj.team.length > 0 && (
-                                            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                                                <Users size={12} style={{ color: "var(--text-muted)" }} />
-                                                <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: 400 }}>{proj.team.length}</span>
-                                            </div>
-                                        )}
                                     </div>
                                 </div>
                             </Link>
@@ -328,7 +321,7 @@ export default function ProjectsPage() {
 function NewProjectModal({ onClose }: { onClose: () => void }) {
     const [form, setForm] = useState({
         name: "",
-        client: "",
+        clientId: "",
         type: "Commercial",
         contractValue: "",
         startDate: "",
@@ -336,6 +329,12 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
         description: "",
     });
     const up = (k: string, v: string) => setForm((prev) => ({ ...prev, [k]: v }));
+
+    const { data: clients = [] } = trpc.project.clients.useQuery();
+    const utils = trpc.useUtils();
+    const createProject = trpc.project.create.useMutation({
+        onSuccess: () => { utils.project.list.invalidate(); onClose(); },
+    });
 
     const inputStyle: React.CSSProperties = {
         width: "100%", padding: "10px 12px", borderRadius: "6px",
@@ -370,7 +369,17 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                 </div>
 
                 <form
-                    onSubmit={(e) => { e.preventDefault(); onClose(); }}
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        createProject.mutate({
+                            name: form.name,
+                            clientId: form.clientId,
+                            type: form.type,
+                            contractValue: parseFloat(form.contractValue.replace(/[^0-9.]/g, "")) || 0,
+                            startDate: form.startDate,
+                            endDate: form.endDate,
+                        });
+                    }}
                     style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}
                 >
                     <div>
@@ -384,10 +393,12 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                         <div>
                             <label style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "6px" }}>Client *</label>
-                            <input type="text" value={form.client} onChange={(e) => up("client", e.target.value)} placeholder="Client name" required style={inputStyle}
-                                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
-                                onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
-                            />
+                            <select value={form.clientId} onChange={(e) => up("clientId", e.target.value)} required style={{ ...inputStyle, cursor: "pointer" }}>
+                                <option value="">Select client...</option>
+                                {clients.map((c: any) => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                ))}
+                            </select>
                         </div>
                         <div>
                             <label style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "6px" }}>Project Type</label>
@@ -433,12 +444,12 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                             style={{ padding: "10px 20px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>
                             Cancel
                         </button>
-                        <button type="submit"
-                            style={{ padding: "10px 24px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "13px", fontWeight: 500, cursor: "pointer", letterSpacing: "0.04em", textTransform: "uppercase", transition: "all 0.2s" }}
+                        <button type="submit" disabled={createProject.isPending}
+                            style={{ padding: "10px 24px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "13px", fontWeight: 500, cursor: "pointer", letterSpacing: "0.04em", textTransform: "uppercase", transition: "all 0.2s", opacity: createProject.isPending ? 0.7 : 1 }}
                             onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(176,122,74,0.2)"; }}
                             onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
                         >
-                            Create Project
+                            {createProject.isPending ? "Creating..." : "Create Project"}
                         </button>
                     </div>
                 </form>

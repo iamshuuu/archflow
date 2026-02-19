@@ -3,20 +3,26 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Eye, EyeOff, ArrowRight } from "lucide-react";
+import { signIn } from "next-auth/react";
 
 export default function LoginPage() {
     const [showPassword, setShowPassword] = useState(false);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
-        // TODO: connect to NextAuth
-        setTimeout(() => {
+        setError("");
+        const res = await signIn("credentials", { email, password, redirect: false });
+        if (res?.error) {
+            setError("Invalid email or password");
+            setLoading(false);
+        } else {
             window.location.href = "/dashboard";
-        }, 800);
+        }
     };
 
     return (
@@ -206,6 +212,11 @@ export default function LoginPage() {
                     </div>
 
                     {/* Email form */}
+                    {error && (
+                        <div style={{ padding: "12px 14px", borderRadius: "6px", background: "rgba(176,80,64,0.08)", border: "1px solid rgba(176,80,64,0.2)", color: "var(--danger)", fontSize: "13px", fontWeight: 400, marginBottom: "4px" }}>
+                            {error}
+                        </div>
+                    )}
                     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
                         <div>
                             <label style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "6px", letterSpacing: "0.02em" }}>

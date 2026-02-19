@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Organization ───
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users    User[]
+  clients  Client[]
+  projects Project[]
+  invoices Invoice[]
+}
+
+// ─── User ───
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("member") // owner | admin | manager | member
+  title        String   @default("")
+  phone        String   @default("")
+  costRate     Float    @default(0)
+  billRate     Float    @default(0)
+  targetUtil   Float    @default(75)
+  createdAt    DateTime @default(now())
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  timeEntries TimeEntry[]
+}
+
+// ─── Client ───
+
+model Client {
+  id    String @id @default(cuid())
+  name  String
+  email String @default("")
+  phone String @default("")
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  projects Project[]
+  invoices Invoice[]
+}
+
+// ─── Project ───
+
+model Project {
+  id            String   @id @default(cuid())
+  name          String
+  type          String   @default("Commercial")
+  status        String   @default("active") // active | pipeline | on-hold | completed | archived
+  phase         String   @default("")
+  progress      Int      @default(0)
+  contractValue Float    @default(0)
+  startDate     String   @default("")
+  endDate       String   @default("")
+  createdAt     DateTime @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  phases      Phase[]
+  timeEntries TimeEntry[]
+  invoices    Invoice[]
+}
+
+// ─── Phase ───
+
+model Phase {
+  id           String @id @default(cuid())
+  name         String
+  budgetHours  Float  @default(0)
+  budgetAmount Float  @default(0)
+  feeType      String @default("hourly") // hourly | fixed | not-to-exceed
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  timeEntries TimeEntry[]
+}
+
+// ─── Time Entry ───
+
+model TimeEntry {
+  id     String @id @default(cuid())
+  date   String // YYYY-MM-DD
+  hours  Float
+  notes  String @default("")
+  status String @default("draft") // draft | submitted | approved
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  phaseId String
+  phase   Phase @relation(fields: [phaseId], references: [id])
+}
+
+// ─── Invoice ───
+
+model Invoice {
+  id      String @id @default(cuid())
+  number  String @unique
+  amount  Float  @default(0)
+  date    String
+  dueDate String
+  status  String @default("draft") // draft | sent | viewed | paid | overdue
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  lineItems InvoiceLineItem[]
+}
+
+// ─── Invoice Line Item ───
+
+model InvoiceLineItem {
+  id          String @id @default(cuid())
+  description String
+  qty         Float
+  rate        Float
+
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
