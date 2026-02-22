@@ -15,18 +15,17 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Email already registered" }, { status: 409 });
         }
 
-        // Get or create default org
-        let org = await db.organization.findFirst();
-        if (!org) {
-            org = await db.organization.create({ data: { name: "My Firm" } });
-        }
+        // Create a new org for each signup so accounts are isolated
+        const org = await db.organization.create({
+            data: { name: `${name}'s Firm` },
+        });
 
         const user = await db.user.create({
             data: {
                 name,
                 email,
                 passwordHash: hashSync(password, 10),
-                role: "member",
+                role: "owner",
                 orgId: org.id,
             },
         });
