@@ -1,142 +1,215 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/app/providers";
 import {
     BarChart3,
     Download,
-    Calendar,
     TrendingUp,
     DollarSign,
     Clock,
     Users,
     FileText,
-    ChevronDown,
+    Percent,
+    Target,
+    Filter,
+    Printer,
+    Loader2,
 } from "lucide-react";
 
-const formatCurrency = (v: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(v);
+const formatCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
-type ReportType = "revenue" | "utilization" | "profitability" | "receivables";
+type ReportType = "revenue" | "utilization" | "profitability" | "receivables" | "realization" | "profit-drivers";
 
 export default function ReportsPage() {
     const [activeReport, setActiveReport] = useState<ReportType>("revenue");
-    const [period, setPeriod] = useState("12-months");
     const [showToast, setShowToast] = useState(false);
 
-    // Load real data from tRPC
+    // Filters
+    const [filterProject, setFilterProject] = useState("");
+    const [filterTeamMember, setFilterTeamMember] = useState("");
+
     const { data: rawProjects = [] } = trpc.project.budgets.useQuery();
     const { data: rawTeam = [] } = trpc.team.list.useQuery();
     const { data: rawInvoices = [] } = trpc.invoice.list.useQuery();
+    const { data: rawExpenses = [] } = trpc.expense.list.useQuery();
 
-    // Compute project P&L from real data
-    const projectPL = rawProjects.map((p: any) => {
+    // Apply filters — only to data that has relevant dimension
+    const projects = useMemo(() => {
+        if (!filterProject) return rawProjects as any[];
+        return (rawProjects as any[]).filter((p: any) => p.id === filterProject);
+    }, [rawProjects, filterProject]);
+
+    const teamMembers = useMemo(() => {
+        if (!filterTeamMember) return rawTeam as any[];
+        return (rawTeam as any[]).filter((m: any) => m.id === filterTeamMember);
+    }, [rawTeam, filterTeamMember]);
+
+    // Revenue
+    const totalRevenue = projects.reduce((s: number, p: any) => s + (p.contractValue || 0), 0);
+
+    // Project P&L
+    const projectPL = projects.map((p: any) => {
         const revenue = p.contractValue || 0;
         const totalHours = (p.phases || []).reduce((s: number, ph: any) =>
             s + (ph.timeEntries || []).reduce((hs: number, te: any) => hs + te.hours, 0), 0);
-        const avgCostRate = 55; // org average
-        const cost = Math.round(totalHours * avgCostRate);
+        const cost = Math.round(totalHours * 55);
         const profit = revenue - cost;
         const margin = revenue > 0 ? Math.round((profit / revenue) * 100) : 0;
-        return { name: p.name, revenue, cost, profit, margin };
+        return { name: p.name, revenue, cost, profit, margin, hours: totalHours };
     });
 
-    // Compute utilization from team data
-    const utilizationByPerson = rawTeam.map((m: any) => {
-        const totalHours = (m.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
-        const targetWeekly = 40;
-        const weeks = 6;
-        const capacity = targetWeekly * weeks;
-        const billable = capacity > 0 ? Math.round((totalHours / capacity) * 100) : 0;
-        return { name: m.name, billable: Math.min(billable, 100), nonBillable: Math.max(0, Math.min(15, 100 - billable)), pto: Math.max(0, 100 - billable - 15) };
+    // Utilization
+    const utilizationByPerson = teamMembers.map((m: any) => {
+        const entries = m.timeEntries || [];
+        const totalHours = entries.reduce((s: number, te: any) => s + te.hours, 0);
+        const billableHours = entries.filter((te: any) => te.billable !== false).reduce((s: number, te: any) => s + te.hours, 0);
+        const nonBillableHours = entries.filter((te: any) => te.billable === false && te.entryType !== "pto").reduce((s: number, te: any) => s + te.hours, 0);
+        const ptoHours = entries.filter((te: any) => te.entryType === "pto").reduce((s: number, te: any) => s + te.hours, 0);
+        const capacity = 40 * 6;
+        return {
+            name: m.name, title: m.title || "",
+            billable: capacity > 0 ? Math.round((billableHours / capacity) * 100) : 0,
+            nonBillable: capacity > 0 ? Math.round((nonBillableHours / capacity) * 100) : 0,
+            pto: capacity > 0 ? Math.round((ptoHours / capacity) * 100) : 0,
+            billableHours, nonBillableHours, ptoHours, totalHours,
+            billRate: m.billRate || 0, costRate: m.costRate || 0,
+        };
     });
 
-    // Compute aged receivables from real invoices
+    // Realization rate: billed $ vs potential (billable hours × bill rate)
+    const realizationData = teamMembers.map((m: any) => {
+        const entries = m.timeEntries || [];
+        const billableHours = entries.filter((te: any) => te.billable !== false).reduce((s: number, te: any) => s + te.hours, 0);
+        const billRate = m.billRate || 150;
+        const potential = billableHours * billRate;
+        // Match invoiced amounts for this member's projects
+        const invoiced = (rawInvoices as any[])
+            .filter((inv: any) => inv.status === "paid")
+            .reduce((s: number, inv: any) => s + inv.amount, 0);
+        const perPersonInvoiced = teamMembers.length > 0 ? invoiced / teamMembers.length : 0;
+        const rate = potential > 0 ? Math.round((perPersonInvoiced / potential) * 100) : 0;
+        return { name: m.name, title: m.title || "", billableHours, potential, invoiced: Math.round(perPersonInvoiced), rate };
+    });
+
+    // Profit drivers
+    const profitDrivers = projects.map((p: any) => {
+        const rev = p.contractValue || 0;
+        const hours = (p.phases || []).reduce((s: number, ph: any) =>
+            s + (ph.timeEntries || []).reduce((hs: number, te: any) => hs + te.hours, 0), 0);
+        const laborCost = Math.round(hours * 55);
+        const expenses = (rawExpenses as any[]).filter((e: any) => e.projectId === p.id).reduce((s: number, e: any) => s + e.amount, 0);
+        const totalCost = laborCost + expenses;
+        const profit = rev - totalCost;
+        const margin = rev > 0 ? Math.round((profit / rev) * 100) : 0;
+        return { name: p.name, revenue: rev, laborCost, expenses, totalCost, profit, margin, hours };
+    }).sort((a, b) => b.profit - a.profit);
+
+    // Aged receivables
     const now = new Date();
-    const unpaidInvoices = rawInvoices.filter((inv: any) => inv.status !== "paid");
+    const unpaidInvoices = (rawInvoices as any[]).filter((inv: any) => inv.status !== "paid");
     const agedReceivables = [
-        { range: "Current", amount: unpaidInvoices.filter((i: any) => { const d = new Date(i.dueDate); return d >= now; }).reduce((s: number, i: any) => s + i.amount, 0) },
-        { range: "1–30 days", amount: unpaidInvoices.filter((i: any) => { const d = new Date(i.dueDate); const days = (now.getTime() - d.getTime()) / 86400000; return days > 0 && days <= 30; }).reduce((s: number, i: any) => s + i.amount, 0) },
-        { range: "31–60 days", amount: unpaidInvoices.filter((i: any) => { const d = new Date(i.dueDate); const days = (now.getTime() - d.getTime()) / 86400000; return days > 30 && days <= 60; }).reduce((s: number, i: any) => s + i.amount, 0) },
-        { range: "61–90 days", amount: unpaidInvoices.filter((i: any) => { const d = new Date(i.dueDate); const days = (now.getTime() - d.getTime()) / 86400000; return days > 60 && days <= 90; }).reduce((s: number, i: any) => s + i.amount, 0) },
-        { range: "90+ days", amount: unpaidInvoices.filter((i: any) => { const d = new Date(i.dueDate); const days = (now.getTime() - d.getTime()) / 86400000; return days > 90; }).reduce((s: number, i: any) => s + i.amount, 0) },
+        { range: "Current", amount: unpaidInvoices.filter((i: any) => new Date(i.dueDate) >= now).reduce((s: number, i: any) => s + i.amount, 0) },
+        { range: "1–30 days", amount: unpaidInvoices.filter((i: any) => { const d = (now.getTime() - new Date(i.dueDate).getTime()) / 86400000; return d > 0 && d <= 30; }).reduce((s: number, i: any) => s + i.amount, 0) },
+        { range: "31–60 days", amount: unpaidInvoices.filter((i: any) => { const d = (now.getTime() - new Date(i.dueDate).getTime()) / 86400000; return d > 30 && d <= 60; }).reduce((s: number, i: any) => s + i.amount, 0) },
+        { range: "61–90 days", amount: unpaidInvoices.filter((i: any) => { const d = (now.getTime() - new Date(i.dueDate).getTime()) / 86400000; return d > 60 && d <= 90; }).reduce((s: number, i: any) => s + i.amount, 0) },
+        { range: "90+ days", amount: unpaidInvoices.filter((i: any) => (now.getTime() - new Date(i.dueDate).getTime()) / 86400000 > 90).reduce((s: number, i: any) => s + i.amount, 0) },
     ];
 
-    // Revenue chart — static trend data (would need time-series aggregation for real data)
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const rawTotalRevenue = rawProjects.reduce((s: number, p: any) => s + (p.contractValue || 0), 0);
-    const monthlyAvg = Math.round(rawTotalRevenue / 12);
-    const revenueData = months.map((_, i) => Math.round(monthlyAvg * (0.7 + Math.random() * 0.6)));
-    const hoursData = months.map((_, i) => Math.round(700 * (0.8 + Math.random() * 0.4)));
+    // Summary stats
+    const avgUtil = utilizationByPerson.length > 0 ? Math.round(utilizationByPerson.reduce((s, u) => s + u.billable, 0) / utilizationByPerson.length) : 0;
+    const totalProfit = projectPL.reduce((s, p) => s + p.profit, 0);
+    const totalOutstanding = agedReceivables.reduce((s, a) => s + a.amount, 0);
+    const avgRealization = realizationData.length > 0 ? Math.round(realizationData.reduce((s, r) => s + r.rate, 0) / realizationData.length) : 0;
 
     const exportCSV = () => {
-        let csvContent = "";
-        let filename = "";
-
+        let csv = "", filename = "";
         if (activeReport === "revenue") {
-            csvContent = "Month,Revenue,Hours\n" + months.map((m, i) => `${m},${revenueData[i]},${hoursData[i]}`).join("\n");
-            filename = "archflow_revenue_report.csv";
+            csv = "Project,Revenue,Cost,Profit,Margin %\n" + projectPL.map(p => `${p.name},${p.revenue},${p.cost},${p.profit},${p.margin}`).join("\n");
+            filename = "archflow_revenue.csv";
         } else if (activeReport === "utilization") {
-            csvContent = "Name,Billable %,Non-Billable %,PTO %\n" + utilizationByPerson.map((u) => `${u.name},${u.billable},${u.nonBillable},${u.pto}`).join("\n");
-            filename = "archflow_utilization_report.csv";
-        } else if (activeReport === "profitability") {
-            csvContent = "Project,Revenue,Cost,Profit,Margin %\n" + projectPL.map((p) => `${p.name},${p.revenue},${p.cost},${p.profit},${p.margin}`).join("\n");
-            filename = "archflow_profitability_report.csv";
+            csv = "Name,Billable %,Non-Billable %,PTO %,Billable Hours,Total Hours\n" + utilizationByPerson.map(u => `${u.name},${u.billable},${u.nonBillable},${u.pto},${u.billableHours},${u.totalHours}`).join("\n");
+            filename = "archflow_utilization.csv";
+        } else if (activeReport === "profitability" || activeReport === "profit-drivers") {
+            csv = "Project,Revenue,Labor Cost,Expenses,Total Cost,Profit,Margin %\n" + profitDrivers.map(p => `${p.name},${p.revenue},${p.laborCost},${p.expenses},${p.totalCost},${p.profit},${p.margin}`).join("\n");
+            filename = "archflow_profitability.csv";
+        } else if (activeReport === "realization") {
+            csv = "Name,Billable Hours,Potential,Invoiced,Rate %\n" + realizationData.map(r => `${r.name},${r.billableHours},${r.potential},${r.invoiced},${r.rate}`).join("\n");
+            filename = "archflow_realization.csv";
         } else {
-            csvContent = "Age Range,Amount\n" + agedReceivables.map((a) => `${a.range},${a.amount}`).join("\n");
-            filename = "archflow_receivables_report.csv";
+            csv = "Age Range,Amount\n" + agedReceivables.map(a => `${a.range},${a.amount}`).join("\n");
+            filename = "archflow_receivables.csv";
         }
-
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
+        link.href = url; link.download = filename;
+        document.body.appendChild(link); link.click();
+        document.body.removeChild(link); URL.revokeObjectURL(url);
         setShowToast(true);
         setTimeout(() => setShowToast(false), 3000);
     };
 
-    const totalRevenue = revenueData.reduce((s, v) => s + v, 0);
-    const totalHours = hoursData.reduce((s, v) => s + v, 0);
-    const avgUtil = Math.round(utilizationByPerson.reduce((s, u) => s + u.billable, 0) / utilizationByPerson.length);
-    const totalAR = agedReceivables.reduce((s, a) => s + a.amount, 0);
+    const exportPDF = () => {
+        // Build HTML report
+        const title = reportTabs.find(t => t.key === activeReport)?.label || "Report";
+        let bodyHtml = "";
 
-    const reports: { key: ReportType; label: string; icon: typeof BarChart3 }[] = [
-        { key: "revenue", label: "Revenue", icon: DollarSign },
-        { key: "utilization", label: "Utilization", icon: Clock },
-        { key: "profitability", label: "Profitability", icon: TrendingUp },
-        { key: "receivables", label: "Receivables", icon: FileText },
+        if (activeReport === "revenue" || activeReport === "profitability") {
+            const data = activeReport === "revenue" ? projectPL : profitDrivers;
+            bodyHtml = `<table style="width:100%;border-collapse:collapse;margin-top:20px"><thead><tr style="border-bottom:2px solid #B07A4A"><th style="text-align:left;padding:8px">Project</th><th style="text-align:right;padding:8px">Revenue</th><th style="text-align:right;padding:8px">Cost</th><th style="text-align:right;padding:8px">Profit</th><th style="text-align:right;padding:8px">Margin</th></tr></thead><tbody>${data.map(p => `<tr style="border-bottom:1px solid #eee"><td style="padding:8px">${p.name}</td><td style="text-align:right;padding:8px">${formatCurrency(p.revenue)}</td><td style="text-align:right;padding:8px">${formatCurrency(p.cost)}</td><td style="text-align:right;padding:8px;color:${p.profit >= 0 ? '#5a7a46' : '#b05040'}">${formatCurrency(p.profit)}</td><td style="text-align:right;padding:8px">${p.margin}%</td></tr>`).join("")}</tbody></table>`;
+        } else if (activeReport === "utilization") {
+            bodyHtml = `<table style="width:100%;border-collapse:collapse;margin-top:20px"><thead><tr style="border-bottom:2px solid #B07A4A"><th style="text-align:left;padding:8px">Name</th><th style="text-align:right;padding:8px">Billable %</th><th style="text-align:right;padding:8px">Billable Hrs</th><th style="text-align:right;padding:8px">Total Hrs</th></tr></thead><tbody>${utilizationByPerson.map(u => `<tr style="border-bottom:1px solid #eee"><td style="padding:8px">${u.name}</td><td style="text-align:right;padding:8px">${u.billable}%</td><td style="text-align:right;padding:8px">${u.billableHours}h</td><td style="text-align:right;padding:8px">${u.totalHours}h</td></tr>`).join("")}</tbody></table>`;
+        } else if (activeReport === "realization") {
+            bodyHtml = `<table style="width:100%;border-collapse:collapse;margin-top:20px"><thead><tr style="border-bottom:2px solid #B07A4A"><th style="text-align:left;padding:8px">Name</th><th style="text-align:right;padding:8px">Billable Hrs</th><th style="text-align:right;padding:8px">Potential</th><th style="text-align:right;padding:8px">Invoiced</th><th style="text-align:right;padding:8px">Rate</th></tr></thead><tbody>${realizationData.map(r => `<tr style="border-bottom:1px solid #eee"><td style="padding:8px">${r.name}</td><td style="text-align:right;padding:8px">${r.billableHours}h</td><td style="text-align:right;padding:8px">${formatCurrency(r.potential)}</td><td style="text-align:right;padding:8px">${formatCurrency(r.invoiced)}</td><td style="text-align:right;padding:8px">${r.rate}%</td></tr>`).join("")}</tbody></table>`;
+        } else if (activeReport === "profit-drivers") {
+            bodyHtml = `<table style="width:100%;border-collapse:collapse;margin-top:20px"><thead><tr style="border-bottom:2px solid #B07A4A"><th style="text-align:left;padding:8px">Project</th><th style="text-align:right;padding:8px">Revenue</th><th style="text-align:right;padding:8px">Labor</th><th style="text-align:right;padding:8px">Expenses</th><th style="text-align:right;padding:8px">Profit</th><th style="text-align:right;padding:8px">Margin</th></tr></thead><tbody>${profitDrivers.map(p => `<tr style="border-bottom:1px solid #eee"><td style="padding:8px">${p.name}</td><td style="text-align:right;padding:8px">${formatCurrency(p.revenue)}</td><td style="text-align:right;padding:8px">${formatCurrency(p.laborCost)}</td><td style="text-align:right;padding:8px">${formatCurrency(p.expenses)}</td><td style="text-align:right;padding:8px;color:${p.profit >= 0 ? '#5a7a46' : '#b05040'}">${formatCurrency(p.profit)}</td><td style="text-align:right;padding:8px">${p.margin}%</td></tr>`).join("")}</tbody></table>`;
+        } else {
+            bodyHtml = `<table style="width:100%;border-collapse:collapse;margin-top:20px"><thead><tr style="border-bottom:2px solid #B07A4A"><th style="text-align:left;padding:8px">Age Range</th><th style="text-align:right;padding:8px">Amount</th></tr></thead><tbody>${agedReceivables.map(a => `<tr style="border-bottom:1px solid #eee"><td style="padding:8px">${a.range}</td><td style="text-align:right;padding:8px">${formatCurrency(a.amount)}</td></tr>`).join("")}</tbody></table>`;
+        }
+
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title} — ArchFlow</title><style>body{font-family:'Segoe UI',system-ui,sans-serif;padding:40px;color:#333}h1{color:#B07A4A;font-size:24px;margin-bottom:4px}p{color:#999;font-size:12px;margin-bottom:20px}</style></head><body><h1>${title}</h1><p>Generated on ${new Date().toLocaleDateString()}</p>${bodyHtml}</body></html>`;
+
+        const blob = new Blob([html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, "_blank");
+        if (win) setTimeout(() => win.print(), 500);
+    };
+
+    const reportTabs: { key: ReportType; label: string; icon: React.ReactNode }[] = [
+        { key: "revenue", label: "Revenue", icon: <DollarSign size={13} /> },
+        { key: "utilization", label: "Utilization", icon: <Clock size={13} /> },
+        { key: "profitability", label: "Profitability", icon: <TrendingUp size={13} /> },
+        { key: "realization", label: "Realization", icon: <Percent size={13} /> },
+        { key: "profit-drivers", label: "Profit Drivers", icon: <Target size={13} /> },
+        { key: "receivables", label: "Receivables", icon: <FileText size={13} /> },
     ];
 
     return (
         <div>
             {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "28px" }}>
+            <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
                     <h1 style={{ fontSize: "24px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Reports</h1>
-                    <p style={{ marginTop: "4px", fontSize: "14px", color: "var(--text-tertiary)", fontWeight: 300 }}>Analytics and insights for your firm</p>
+                    <p style={{ marginTop: "4px", fontSize: "14px", color: "var(--text-tertiary)", fontWeight: 300 }}>Analyze performance, profitability, and realization</p>
                 </div>
-                <button
-                    onClick={exportCSV}
-                    style={{ display: "flex", alignItems: "center", gap: "6px", padding: "10px 16px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", color: "var(--text-secondary)", fontSize: "12px", cursor: "pointer", transition: "all 0.2s" }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; e.currentTarget.style.color = "var(--accent-primary)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; e.currentTarget.style.color = "var(--text-secondary)"; }}
-                >
-                    <Download size={14} /> Export CSV
-                </button>
+                <div style={{ display: "flex", gap: "8px" }}>
+                    <button onClick={exportPDF} style={{ padding: "8px 14px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-secondary)" }}>
+                        <Printer size={13} /> PDF
+                    </button>
+                    <button onClick={exportCSV} style={{ padding: "8px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "white", fontWeight: 500 }}>
+                        <Download size={13} /> CSV
+                    </button>
+                </div>
             </div>
 
-            {/* Summary row */}
+            {/* Summary cards */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px", marginBottom: "24px" }}>
                 {[
-                    { label: "Annual Revenue", value: formatCurrency(totalRevenue), icon: DollarSign, color: "var(--accent-primary)" },
-                    { label: "Total Hours", value: `${totalHours.toLocaleString()}h`, icon: Clock, color: "var(--accent-secondary)" },
-                    { label: "Avg Utilization", value: `${avgUtil}%`, icon: Users, color: "var(--accent-gold)" },
-                    { label: "Accounts Receivable", value: formatCurrency(totalAR), icon: FileText, color: "var(--info)" },
+                    { label: "Total Revenue", value: formatCurrency(totalRevenue), icon: DollarSign, color: "var(--accent-primary)" },
+                    { label: "Avg Utilization", value: `${avgUtil}%`, icon: Clock, color: avgUtil >= 75 ? "var(--success)" : "var(--warning)" },
+                    { label: "Net Profit", value: formatCurrency(totalProfit), icon: TrendingUp, color: totalProfit >= 0 ? "var(--success)" : "var(--danger)" },
+                    { label: "Avg Realization", value: `${avgRealization}%`, icon: Percent, color: avgRealization >= 80 ? "var(--success)" : "var(--warning)" },
                 ].map((card, i) => (
                     <div key={i} style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -148,191 +221,218 @@ export default function ReportsPage() {
                 ))}
             </div>
 
+            {/* Filters */}
+            <div style={{ display: "flex", gap: "10px", marginBottom: "20px", alignItems: "center" }}>
+                <Filter size={14} style={{ color: "var(--text-muted)" }} />
+                <select value={filterProject} onChange={e => setFilterProject(e.target.value)} style={{ padding: "7px 10px", borderRadius: "5px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", fontSize: "11px", color: "var(--text-primary)", cursor: "pointer" }}>
+                    <option value="">All Projects</option>
+                    {(rawProjects as any[]).map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <select value={filterTeamMember} onChange={e => setFilterTeamMember(e.target.value)} style={{ padding: "7px 10px", borderRadius: "5px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", fontSize: "11px", color: "var(--text-primary)", cursor: "pointer" }}>
+                    <option value="">All Team Members</option>
+                    {(rawTeam as any[]).map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                {(filterProject || filterTeamMember) && (
+                    <button onClick={() => { setFilterProject(""); setFilterTeamMember(""); }} style={{ padding: "6px 12px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "transparent", cursor: "pointer", fontSize: "10px", color: "var(--text-muted)" }}>Clear</button>
+                )}
+            </div>
+
             {/* Report tabs */}
-            <div style={{ display: "flex", gap: "2px", background: "var(--bg-secondary)", borderRadius: "8px", padding: "3px", width: "fit-content", marginBottom: "20px" }}>
-                {reports.map((r) => (
-                    <button key={r.key} onClick={() => setActiveReport(r.key)}
-                        style={{ padding: "8px 16px", borderRadius: "6px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: activeReport === r.key ? 500 : 400, background: activeReport === r.key ? "var(--bg-card)" : "transparent", color: activeReport === r.key ? "var(--text-primary)" : "var(--text-muted)", boxShadow: activeReport === r.key ? "var(--shadow-sm)" : "none", transition: "all 0.15s", display: "flex", alignItems: "center", gap: "6px" }}>
-                        <r.icon size={13} /> {r.label}
+            <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "1px solid var(--border-primary)", overflowX: "auto" }}>
+                {reportTabs.map(tab => (
+                    <button key={tab.key} onClick={() => setActiveReport(tab.key)} style={{ padding: "10px 16px", fontSize: "11px", fontWeight: 500, cursor: "pointer", border: "none", background: "none", color: activeReport === tab.key ? "var(--accent-primary)" : "var(--text-muted)", borderBottom: activeReport === tab.key ? "2px solid var(--accent-primary)" : "2px solid transparent", transition: "all 0.15s", display: "flex", alignItems: "center", gap: "5px", whiteSpace: "nowrap" }}>
+                        {tab.icon} {tab.label}
                     </button>
                 ))}
             </div>
 
-            {/* Revenue report */}
-            {activeReport === "revenue" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                    <div style={{ gridColumn: "span 2", padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                            <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Monthly Revenue</h3>
-                            <span style={{ fontSize: "10px", color: "var(--text-muted)", padding: "4px 10px", borderRadius: "4px", border: "1px solid var(--border-primary)" }}>FY 2026</span>
+            {/* Report content */}
+            <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                {/* Revenue */}
+                {activeReport === "revenue" && (
+                    <div>
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Revenue by Project</h3>
                         </div>
-                        <div style={{ display: "flex", alignItems: "flex-end", gap: "8px", height: "200px" }}>
-                            {revenueData.map((v, i) => {
-                                const maxVal = Math.max(...revenueData);
-                                const h = (v / maxVal) * 100;
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                            <thead><tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                                {["Project", "Revenue", "Hours", "Cost", "Profit", "Margin"].map(h => <th key={h} style={{ padding: "10px 14px", textAlign: h === "Project" ? "left" : "right", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>
+                                {projectPL.length === 0 ? <tr><td colSpan={6} style={{ padding: "30px", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>No data</td></tr> : projectPL.map((p, i) => (
+                                    <tr key={i} style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{p.name}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right" }}>{formatCurrency(p.revenue)}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right", color: "var(--text-muted)" }}>{p.hours}h</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right", color: "var(--text-muted)" }}>{formatCurrency(p.cost)}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right", fontWeight: 600, color: p.profit >= 0 ? "var(--success)" : "var(--danger)" }}>{formatCurrency(p.profit)}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right" }}><span style={{ padding: "2px 8px", borderRadius: "3px", background: p.margin >= 30 ? "rgba(90,122,70,0.08)" : "rgba(176,80,64,0.08)", color: p.margin >= 30 ? "var(--success)" : "var(--danger)", fontSize: "10px", fontWeight: 600 }}>{p.margin}%</span></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {/* Utilization */}
+                {activeReport === "utilization" && (
+                    <div>
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Team Utilization</h3>
+                        </div>
+                        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                            {utilizationByPerson.length === 0 ? <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>No data</p> : utilizationByPerson.map((u, i) => (
+                                <div key={i}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                                        <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{u.name}</span>
+                                        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{u.billableHours}h billable · {u.totalHours}h total</span>
+                                    </div>
+                                    <div style={{ display: "flex", height: "12px", borderRadius: "6px", overflow: "hidden", background: "var(--bg-tertiary)" }}>
+                                        <div style={{ width: `${u.billable}%`, background: "var(--success)", transition: "width 0.3s" }} />
+                                        <div style={{ width: `${u.nonBillable}%`, background: "var(--warning)", transition: "width 0.3s" }} />
+                                        <div style={{ width: `${u.pto}%`, background: "var(--info)", transition: "width 0.3s" }} />
+                                    </div>
+                                    <div style={{ display: "flex", gap: "16px", marginTop: "4px", fontSize: "9px", color: "var(--text-muted)" }}>
+                                        <span>● Billable {u.billable}%</span>
+                                        <span>● Non-Bill {u.nonBillable}%</span>
+                                        <span>● PTO {u.pto}%</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Profitability */}
+                {activeReport === "profitability" && (
+                    <div>
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Project Profitability</h3>
+                        </div>
+                        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "12px" }}>
+                            {projectPL.length === 0 ? <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>No data</p> : projectPL.map((p, i) => {
+                                const maxRev = Math.max(...projectPL.map(x => x.revenue), 1);
                                 return (
-                                    <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", gap: "6px" }}>
-                                        <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>{formatCurrency(v)}</span>
-                                        <div style={{ width: "100%", borderRadius: "3px 3px 0 0", height: `${h}%`, background: i === revenueData.length - 1 ? "var(--accent-primary)" : "rgba(176,122,74,0.15)", transition: "height 0.4s", minHeight: "4px" }} />
-                                        <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>{months[i]}</span>
+                                    <div key={i} style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-warm)" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                                            <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{p.name}</span>
+                                            <span style={{ fontSize: "12px", fontWeight: 600, color: p.profit >= 0 ? "var(--success)" : "var(--danger)" }}>{formatCurrency(p.profit)}</span>
+                                        </div>
+                                        <div style={{ position: "relative", height: "8px", borderRadius: "4px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                                            <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${(p.revenue / maxRev) * 100}%`, background: "rgba(90,122,70,0.3)", borderRadius: "4px" }} />
+                                            <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${(p.cost / maxRev) * 100}%`, background: "rgba(176,80,64,0.3)", borderRadius: "4px" }} />
+                                        </div>
+                                        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "9px", color: "var(--text-muted)" }}>
+                                            <span>Rev: {formatCurrency(p.revenue)}</span>
+                                            <span>Cost: {formatCurrency(p.cost)}</span>
+                                            <span>Margin: {p.margin}%</span>
+                                        </div>
                                     </div>
                                 );
                             })}
                         </div>
                     </div>
-                </div>
-            )}
+                )}
 
-            {/* Utilization report */}
-            {activeReport === "utilization" && (
-                <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                    <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "20px" }}>Team Utilization Breakdown</h3>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                        {utilizationByPerson.map((person, i) => (
-                            <div key={i}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                                    <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{person.name}</span>
-                                    <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{person.billable}% billable</span>
-                                </div>
-                                <div style={{ display: "flex", height: "20px", borderRadius: "4px", overflow: "hidden", background: "var(--bg-secondary)" }}>
-                                    <div style={{ width: `${person.billable}%`, background: "var(--accent-primary)", transition: "width 0.4s" }} />
-                                    <div style={{ width: `${person.nonBillable}%`, background: "rgba(176,122,74,0.25)", transition: "width 0.4s" }} />
-                                    <div style={{ width: `${person.pto}%`, background: "var(--bg-tertiary)", transition: "width 0.4s" }} />
-                                </div>
+                {/* Realization Rate */}
+                {activeReport === "realization" && (
+                    <div>
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Realization Rate</h3>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>Percentage of billable potential actually collected through paid invoices</p>
+                        </div>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                            <thead><tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                                {["Name", "Billable Hours", "Potential ($)", "Invoiced ($)", "Realization"].map(h => <th key={h} style={{ padding: "10px 14px", textAlign: h === "Name" ? "left" : "right", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>
+                                {realizationData.length === 0 ? <tr><td colSpan={5} style={{ padding: "30px", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>No data</td></tr> : realizationData.map((r, i) => (
+                                    <tr key={i} style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                                        <td style={{ padding: "12px 14px" }}><div style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{r.name}</div><div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.title}</div></td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right" }}>{r.billableHours}h</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right" }}>{formatCurrency(r.potential)}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right" }}>{formatCurrency(r.invoiced)}</td>
+                                        <td style={{ padding: "12px 14px", textAlign: "right" }}>
+                                            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "8px" }}>
+                                                <div style={{ width: "60px", height: "6px", borderRadius: "3px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                                                    <div style={{ height: "100%", width: `${Math.min(r.rate, 100)}%`, background: r.rate >= 80 ? "var(--success)" : r.rate >= 60 ? "var(--warning)" : "var(--danger)", borderRadius: "3px" }} />
+                                                </div>
+                                                <span style={{ fontSize: "12px", fontWeight: 600, color: r.rate >= 80 ? "var(--success)" : r.rate >= 60 ? "var(--warning)" : "var(--danger)" }}>{r.rate}%</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {/* Profit Drivers */}
+                {activeReport === "profit-drivers" && (
+                    <div>
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Profit Drivers</h3>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>Projects ranked by profit contribution — includes labor and expense costs</p>
+                        </div>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                            <thead><tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                                {["Project", "Revenue", "Labor", "Expenses", "Profit", "Margin"].map(h => <th key={h} style={{ padding: "10px 14px", textAlign: h === "Project" ? "left" : "right", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>
+                                {profitDrivers.length === 0 ? <tr><td colSpan={6} style={{ padding: "30px", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>No data</td></tr> : profitDrivers.map((p, i) => (
+                                    <tr key={i} style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{p.name}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right" }}>{formatCurrency(p.revenue)}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right", color: "var(--text-muted)" }}>{formatCurrency(p.laborCost)}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right", color: "var(--text-muted)" }}>{formatCurrency(p.expenses)}</td>
+                                        <td style={{ padding: "12px 14px", fontSize: "12px", textAlign: "right", fontWeight: 600, color: p.profit >= 0 ? "var(--success)" : "var(--danger)" }}>{formatCurrency(p.profit)}</td>
+                                        <td style={{ padding: "12px 14px", textAlign: "right" }}>
+                                            <span style={{ padding: "2px 8px", borderRadius: "3px", background: p.margin >= 30 ? "rgba(90,122,70,0.08)" : "rgba(176,80,64,0.08)", color: p.margin >= 30 ? "var(--success)" : "var(--danger)", fontSize: "10px", fontWeight: 600 }}>{p.margin}%</span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {/* Receivables */}
+                {activeReport === "receivables" && (
+                    <div>
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Aged Receivables</h3>
+                        </div>
+                        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "12px" }}>
+                            {agedReceivables.map((a, i) => {
+                                const max = Math.max(...agedReceivables.map(x => x.amount), 1);
+                                const colors = ["var(--success)", "var(--info)", "var(--warning)", "var(--accent-primary)", "var(--danger)"];
+                                return (
+                                    <div key={i}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                                            <span style={{ fontSize: "12px", color: "var(--text-primary)" }}>{a.range}</span>
+                                            <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>{formatCurrency(a.amount)}</span>
+                                        </div>
+                                        <div style={{ height: "8px", borderRadius: "4px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                                            <div style={{ height: "100%", width: `${(a.amount / max) * 100}%`, background: colors[i], borderRadius: "4px", transition: "width 0.3s" }} />
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            <div style={{ padding: "12px", borderRadius: "6px", background: "var(--bg-warm)", textAlign: "right", marginTop: "8px" }}>
+                                <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", marginRight: "8px" }}>Total Outstanding</span>
+                                <span style={{ fontSize: "16px", fontWeight: 500, color: "var(--accent-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(totalOutstanding)}</span>
                             </div>
-                        ))}
-                        <div style={{ display: "flex", gap: "20px", paddingTop: "12px", borderTop: "1px solid var(--border-primary)" }}>
-                            {[
-                                { label: "Billable", color: "var(--accent-primary)" },
-                                { label: "Non-Billable", color: "rgba(176,122,74,0.25)" },
-                                { label: "PTO", color: "var(--bg-tertiary)" },
-                            ].map((legend) => (
-                                <div key={legend.label} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                    <div style={{ width: "10px", height: "10px", borderRadius: "2px", background: legend.color }} />
-                                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{legend.label}</span>
-                                </div>
-                            ))}
                         </div>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
 
-            {/* Profitability report */}
-            {activeReport === "profitability" && (
-                <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
-                    <div style={{ padding: "20px 20px 0" }}>
-                        <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>P&L by Project</h3>
-                    </div>
-                    <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "16px" }}>
-                        <thead>
-                            <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
-                                {["Project", "Revenue", "Cost", "Profit", "Margin", ""].map((h) => (
-                                    <th key={h} style={{ padding: "10px 14px", textAlign: h === "Project" ? "left" : "right", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {projectPL.map((p, i) => (
-                                <tr key={i} style={{ borderBottom: "1px solid var(--border-primary)" }}>
-                                    <td style={{ padding: "14px", fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{p.name}</td>
-                                    <td style={{ padding: "14px", fontSize: "12px", color: "var(--text-secondary)", textAlign: "right" }}>{formatCurrency(p.revenue)}</td>
-                                    <td style={{ padding: "14px", fontSize: "12px", color: "var(--text-tertiary)", textAlign: "right" }}>{formatCurrency(p.cost)}</td>
-                                    <td style={{ padding: "14px", fontSize: "13px", fontWeight: 500, color: "var(--success)", textAlign: "right" }}>{formatCurrency(p.profit)}</td>
-                                    <td style={{ padding: "14px", textAlign: "right" }}>
-                                        <span style={{ fontSize: "11px", fontWeight: 500, padding: "3px 8px", borderRadius: "3px", background: p.margin >= 30 ? "rgba(90,122,70,0.08)" : "rgba(176,138,48,0.08)", color: p.margin >= 30 ? "var(--success)" : "var(--warning)" }}>
-                                            {p.margin}%
-                                        </span>
-                                    </td>
-                                    <td style={{ padding: "14px" }}>
-                                        <div style={{ width: "60px", height: "4px", borderRadius: "2px", background: "var(--bg-tertiary)" }}>
-                                            <div style={{ height: "100%", borderRadius: "2px", width: `${Math.min(p.margin * 2.5, 100)}%`, background: p.margin >= 30 ? "var(--success)" : "var(--warning)" }} />
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                        <tfoot>
-                            <tr style={{ background: "var(--bg-warm)" }}>
-                                <td style={{ padding: "14px", fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>Total</td>
-                                <td style={{ padding: "14px", fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", textAlign: "right" }}>{formatCurrency(projectPL.reduce((s, p) => s + p.revenue, 0))}</td>
-                                <td style={{ padding: "14px", fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)", textAlign: "right" }}>{formatCurrency(projectPL.reduce((s, p) => s + p.cost, 0))}</td>
-                                <td style={{ padding: "14px", fontSize: "13px", fontWeight: 600, color: "var(--success)", textAlign: "right" }}>{formatCurrency(projectPL.reduce((s, p) => s + p.profit, 0))}</td>
-                                <td style={{ padding: "14px", textAlign: "right" }}>
-                                    <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--success)" }}>{Math.round(projectPL.reduce((s, p) => s + p.profit, 0) / projectPL.reduce((s, p) => s + p.revenue, 0) * 100)}%</span>
-                                </td>
-                                <td />
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>
-            )}
-
-            {/* Receivables report */}
-            {activeReport === "receivables" && (
-                <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                    <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "20px" }}>Aged Receivables</h3>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                        {agedReceivables.map((ar, i) => {
-                            const maxAR = Math.max(...agedReceivables.map((a) => a.amount), 1);
-                            const widthPct = (ar.amount / maxAR) * 100;
-                            const isOverdue = i >= 2;
-                            return (
-                                <div key={i} style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                                    <span style={{ fontSize: "12px", color: "var(--text-secondary)", minWidth: "80px" }}>{ar.range}</span>
-                                    <div style={{ flex: 1, height: "28px", borderRadius: "4px", background: "var(--bg-secondary)", position: "relative" }}>
-                                        {ar.amount > 0 && (
-                                            <div style={{
-                                                height: "100%", borderRadius: "4px", width: `${widthPct}%`,
-                                                background: isOverdue ? "rgba(176,80,64,0.15)" : "rgba(176,122,74,0.12)",
-                                                display: "flex", alignItems: "center", paddingLeft: "10px",
-                                                transition: "width 0.4s",
-                                            }}>
-                                                <span style={{ fontSize: "12px", fontWeight: 500, color: isOverdue ? "var(--danger)" : "var(--text-primary)" }}>{formatCurrency(ar.amount)}</span>
-                                            </div>
-                                        )}
-                                        {ar.amount === 0 && (
-                                            <div style={{ height: "100%", display: "flex", alignItems: "center", paddingLeft: "10px" }}>
-                                                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>$0</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                    <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>Total Outstanding</span>
-                        <span style={{ fontSize: "16px", fontWeight: 400, color: "var(--accent-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(totalAR)}</span>
-                    </div>
-                </div>
-            )}
-
-            {/* Export toast */}
+            {/* Toast */}
             {showToast && (
-                <div style={{
-                    position: "fixed", bottom: "24px", right: "24px", zIndex: 300,
-                    padding: "14px 22px", borderRadius: "10px",
-                    background: "var(--bg-card)", border: "1px solid rgba(90,122,70,0.25)",
-                    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-                    display: "flex", alignItems: "center", gap: "10px",
-                    animation: "slideUp 0.3s ease-out",
-                }}>
-                    <div style={{ width: "24px", height: "24px", borderRadius: "50%", background: "rgba(90,122,70,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Download size={12} style={{ color: "var(--success)" }} />
-                    </div>
-                    <div>
-                        <p style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>Export complete</p>
-                        <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "1px" }}>{activeReport.charAt(0).toUpperCase() + activeReport.slice(1)} report downloaded</p>
-                    </div>
+                <div style={{ position: "fixed", bottom: "24px", right: "24px", padding: "12px 20px", borderRadius: "8px", background: "var(--success)", color: "white", fontSize: "12px", fontWeight: 500, boxShadow: "0 4px 20px rgba(0,0,0,0.2)", zIndex: 1000, animation: "fadeIn 0.2s" }}>
+                    Report exported successfully
                 </div>
             )}
-
-            <style>{`
-                @keyframes slideUp {
-                    from { opacity: 0; transform: translateY(12px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-            `}</style>
         </div>
     );
 }

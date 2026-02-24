@@ -27,6 +27,9 @@ export const timeRouter = router({
             date: z.string(),
             hours: z.number().min(0),
             notes: z.string().default(""),
+            billable: z.boolean().default(true),
+            entryType: z.enum(["regular", "pto", "holiday", "admin"]).default("regular"),
+            activityType: z.enum(["design", "project-mgmt", "site-visit", "meeting", "admin", "other"]).default("design"),
         }))
         .mutation(async ({ ctx, input }) => {
             const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
@@ -44,5 +47,28 @@ export const timeRouter = router({
                 where: { id: { in: input.ids } },
                 data: { status: "submitted" },
             });
+        }),
+
+    ptoSummary: protectedProcedure
+        .query(async ({ ctx }) => {
+            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+            if (!user) return [];
+            const members = await ctx.db.user.findMany({
+                where: { orgId: user.orgId },
+            });
+            const results = [];
+            for (const m of members) {
+                const ptoEntries = await ctx.db.timeEntry.findMany({
+                    where: { userId: m.id, entryType: "pto" },
+                });
+                const ptoHours = ptoEntries.reduce((s: number, e: { hours: number }) => s + e.hours, 0);
+                results.push({
+                    id: m.id,
+                    name: m.name,
+                    ptoDays: ptoHours / 8,
+                    ptoHours,
+                });
+            }
+            return results;
         }),
 });

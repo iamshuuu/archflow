@@ -19,11 +19,14 @@ import {
     Target,
     Calendar,
     Briefcase,
+    DollarSign,
 } from "lucide-react";
 
 /* ─── Types ─── */
 
 type TimesheetStatus = "draft" | "submitted" | "approved" | "rejected";
+type EntryType = "regular" | "pto" | "holiday" | "admin";
+type ActivityType = "design" | "project-mgmt" | "site-visit" | "meeting" | "admin" | "other";
 
 interface ProjectOption {
     id: string;
@@ -38,7 +41,14 @@ interface TimesheetRow {
     phase: string;
     hours: number[];
     notes: string[];
+    billable: boolean;
+    entryType: EntryType;
+    activityType: ActivityType;
 }
+
+const entryTypeLabels: Record<EntryType, string> = { regular: "Regular", pto: "PTO", holiday: "Holiday", admin: "Admin" };
+const activityTypeLabels: Record<ActivityType, string> = { design: "Design", "project-mgmt": "Project Mgmt", "site-visit": "Site Visit", meeting: "Meeting", admin: "Admin", other: "Other" };
+const entryTypeColors: Record<EntryType, string> = { regular: "var(--accent-primary)", pto: "#6B8DD6", holiday: "#8BC6A0", admin: "var(--text-muted)" };
 
 /* ─── Data ─── */
 
@@ -179,12 +189,19 @@ export default function TimePage() {
                 phase: newRowPhase,
                 hours: [0, 0, 0, 0, 0, 0, 0],
                 notes: ["", "", "", "", "", "", ""],
+                billable: true,
+                entryType: "regular" as EntryType,
+                activityType: "design" as ActivityType,
             },
         ]);
         setShowAddRow(false);
         setNewRowProjectId("");
         setNewRowPhase("");
     };
+
+    const toggleBillable = (idx: number) => setRows((prev) => prev.map((r, i) => i === idx ? { ...r, billable: !r.billable } : r));
+    const setEntryType = (idx: number, t: EntryType) => setRows((prev) => prev.map((r, i) => i === idx ? { ...r, entryType: t, billable: t === "regular" } : r));
+    const setActivityType = (idx: number, t: ActivityType) => setRows((prev) => prev.map((r, i) => i === idx ? { ...r, activityType: t } : r));
 
     const removeRow = (idx: number) => setRows((prev) => prev.filter((_, i) => i !== idx));
 
@@ -194,7 +211,9 @@ export default function TimePage() {
 
     const dayTotals = weekDays.map((_, di) => rows.reduce((s, r) => s + r.hours[di], 0));
     const weekTotal = dayTotals.reduce((s, v) => s + v, 0);
-    const billableHours = rows.filter((r) => r.projectId !== "internal").reduce((s, r) => s + r.hours.reduce((a, b) => a + b, 0), 0);
+    const billableHours = rows.filter((r) => r.billable).reduce((s, r) => s + r.hours.reduce((a, b) => a + b, 0), 0);
+    const nonBillableHours = weekTotal - billableHours;
+    const ptoHours = rows.filter((r) => r.entryType === "pto").reduce((s, r) => s + r.hours.reduce((a, b) => a + b, 0), 0);
     const utilization = weekTotal > 0 ? Math.round((billableHours / 40) * 100) : 0;
 
     const sc = statusConfig[status];
@@ -374,7 +393,7 @@ export default function TimePage() {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                         <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
-                            <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", minWidth: "220px" }}>
+                            <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", minWidth: "280px" }}>
                                 Project / Phase
                             </th>
                             {weekDays.map((day, i) => {
@@ -410,12 +429,53 @@ export default function TimePage() {
                             const rowTotal = row.hours.reduce((s, h) => s + h, 0);
                             return (
                                 <tr key={row.id} style={{ borderBottom: "1px solid var(--border-primary)" }}>
-                                    <td style={{ padding: "12px 16px" }}>
+                                    <td style={{ padding: "10px 16px" }}>
                                         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                            <div style={{ width: "4px", height: "32px", borderRadius: "2px", background: `hsl(${ri * 55 + 20}, 45%, 55%)`, flexShrink: 0 }} />
-                                            <div>
-                                                <p style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.3 }}>{row.projectName}</p>
-                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 300, marginTop: "1px" }}>{row.phase}</p>
+                                            <div style={{ width: "4px", height: "46px", borderRadius: "2px", background: entryTypeColors[row.entryType], flexShrink: 0, opacity: row.billable ? 1 : 0.4 }} />
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                                    <p style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.3 }}>{row.projectName}</p>
+                                                    {/* Billable toggle */}
+                                                    <button
+                                                        onClick={() => status === "draft" && toggleBillable(ri)}
+                                                        title={row.billable ? "Billable" : "Non-billable"}
+                                                        style={{
+                                                            display: "inline-flex", alignItems: "center", gap: "2px",
+                                                            padding: "1px 6px", borderRadius: "3px", border: "none",
+                                                            background: row.billable ? "rgba(90,122,70,0.1)" : "rgba(150,150,150,0.1)",
+                                                            color: row.billable ? "var(--success)" : "var(--text-muted)",
+                                                            fontSize: "9px", fontWeight: 600, cursor: status === "draft" ? "pointer" : "default",
+                                                            textTransform: "uppercase", letterSpacing: "0.04em",
+                                                            transition: "all 0.15s",
+                                                        }}
+                                                    >
+                                                        <DollarSign size={9} />
+                                                        {row.billable ? "Billable" : "Non-bill"}
+                                                    </button>
+                                                </div>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "3px" }}>
+                                                    <span style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 300 }}>{row.phase}</span>
+                                                    <span style={{ fontSize: "8px", color: "var(--text-muted)" }}>•</span>
+                                                    {status === "draft" ? (
+                                                        <select value={row.entryType} onChange={(e) => setEntryType(ri, e.target.value as EntryType)}
+                                                            style={{ padding: "0 4px", border: "none", background: "none", fontSize: "10px", color: entryTypeColors[row.entryType], fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}
+                                                        >
+                                                            {Object.entries(entryTypeLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                                        </select>
+                                                    ) : (
+                                                        <span style={{ fontSize: "10px", color: entryTypeColors[row.entryType], fontWeight: 500 }}>{entryTypeLabels[row.entryType]}</span>
+                                                    )}
+                                                    <span style={{ fontSize: "8px", color: "var(--text-muted)" }}>•</span>
+                                                    {status === "draft" ? (
+                                                        <select value={row.activityType} onChange={(e) => setActivityType(ri, e.target.value as ActivityType)}
+                                                            style={{ padding: "0 4px", border: "none", background: "none", fontSize: "10px", color: "var(--text-muted)", fontWeight: 400, cursor: "pointer", fontFamily: "inherit" }}
+                                                        >
+                                                            {Object.entries(activityTypeLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                                        </select>
+                                                    ) : (
+                                                        <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{activityTypeLabels[row.activityType]}</span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     </td>
@@ -461,7 +521,14 @@ export default function TimePage() {
 
                     <tfoot>
                         <tr style={{ background: "var(--bg-warm)" }}>
-                            <td style={{ padding: "12px 16px", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Daily Total</td>
+                            <td style={{ padding: "12px 16px" }}>
+                                <div style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Daily Total</div>
+                                <div style={{ display: "flex", gap: "10px", marginTop: "3px" }}>
+                                    <span style={{ fontSize: "10px", color: "var(--success)" }}>Billable: {billableHours}h</span>
+                                    <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Non-bill: {nonBillableHours}h</span>
+                                    {ptoHours > 0 && <span style={{ fontSize: "10px", color: "#6B8DD6" }}>PTO: {ptoHours}h</span>}
+                                </div>
+                            </td>
                             {dayTotals.map((total, i) => (
                                 <td key={i} style={{ padding: "12px 6px", textAlign: "center" }}>
                                     <span style={{

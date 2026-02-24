@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
+import { trpc } from "@/app/providers";
 import {
     LayoutDashboard,
     FolderKanban,
@@ -20,6 +21,12 @@ import {
     LogOut,
     Building2,
     ChevronDown,
+    Check,
+    AlertTriangle,
+    Info,
+    CalendarRange,
+    Receipt,
+    Waypoints,
 } from "lucide-react";
 
 const navItems = [
@@ -27,14 +34,24 @@ const navItems = [
     { label: "Projects", href: "/dashboard/projects", icon: FolderKanban },
     { label: "Time", href: "/dashboard/time", icon: Clock },
     { label: "Budgets", href: "/dashboard/budgets", icon: DollarSign },
+    { label: "Expenses", href: "/dashboard/expenses", icon: Receipt },
     { label: "Invoices", href: "/dashboard/invoices", icon: FileText },
     { label: "Team", href: "/dashboard/team", icon: Users },
+    { label: "Resources", href: "/dashboard/resources", icon: Waypoints },
     { label: "Reports", href: "/dashboard/reports", icon: BarChart3 },
+    { label: "Schedule", href: "/dashboard/schedule", icon: CalendarRange },
 ];
 
 const bottomItems = [
     { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
+
+const notifTypeStyles: Record<string, { color: string; icon: React.ComponentType<any> }> = {
+    budget_critical: { color: "var(--danger)", icon: AlertTriangle },
+    budget_warning: { color: "var(--warning)", icon: AlertTriangle },
+    budget_alert: { color: "var(--accent-primary)", icon: DollarSign },
+    info: { color: "var(--text-muted)", icon: Info },
+};
 
 export default function DashboardLayout({
     children,
@@ -45,6 +62,34 @@ export default function DashboardLayout({
     const router = useRouter();
     const { data: session, status } = useSession();
     const [collapsed, setCollapsed] = useState(false);
+    const [showNotifs, setShowNotifs] = useState(false);
+    const notifRef = useRef<HTMLDivElement>(null);
+
+    // Notification data
+    const { data: notifications = [], refetch: refetchNotifs } = trpc.notification.list.useQuery(undefined, { enabled: status === "authenticated" });
+    const { data: unreadCount = 0, refetch: refetchCount } = trpc.notification.unreadCount.useQuery(undefined, { enabled: status === "authenticated" });
+    const markRead = trpc.notification.markRead.useMutation({ onSuccess: () => { refetchNotifs(); refetchCount(); } });
+    const markAllRead = trpc.notification.markAllRead.useMutation({ onSuccess: () => { refetchNotifs(); refetchCount(); } });
+    const checkBudgets = trpc.notification.checkBudgets.useMutation({ onSuccess: () => { refetchNotifs(); refetchCount(); } });
+
+    // Auto-check budgets on mount
+    useEffect(() => {
+        if (status === "authenticated") {
+            checkBudgets.mutate();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [status]);
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+                setShowNotifs(false);
+            }
+        };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, []);
 
     // Redirect to login if not authenticated
     if (status === "unauthenticated") {
@@ -77,6 +122,19 @@ export default function DashboardLayout({
     };
 
     const sidebarWidth = collapsed ? 72 : 240;
+
+    const formatTimeAgo = (dateStr: string) => {
+        const d = new Date(dateStr);
+        const now = new Date();
+        const diffMs = now.getTime() - d.getTime();
+        const mins = Math.floor(diffMs / 60000);
+        if (mins < 1) return "Just now";
+        if (mins < 60) return `${mins}m ago`;
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return `${hrs}h ago`;
+        const days = Math.floor(hrs / 24);
+        return `${days}d ago`;
+    };
 
     return (
         <div style={{ display: "flex", minHeight: "100vh", background: "var(--bg-primary)" }}>
@@ -185,8 +243,8 @@ export default function DashboardLayout({
                                     justifyContent: collapsed ? "center" : "flex-start",
                                     background: active ? "rgba(176,122,74,0.08)" : "transparent",
                                     color: active ? "var(--accent-primary)" : "var(--text-tertiary)",
-                                    fontWeight: active ? 500 : 400,
                                     fontSize: "13px",
+                                    fontWeight: active ? 500 : 400,
                                     transition: "all 0.15s",
                                     whiteSpace: "nowrap",
                                 }}
@@ -317,21 +375,129 @@ export default function DashboardLayout({
                         <kbd style={{ fontSize: "10px", color: "var(--text-muted)", background: "var(--bg-card)", border: "1px solid var(--border-primary)", borderRadius: "3px", padding: "1px 5px", fontFamily: "inherit" }}>⌘K</kbd>
                     </div>
 
-                    {/* Actions */}
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    {/* Actions — Notification Bell */}
+                    <div ref={notifRef} style={{ display: "flex", alignItems: "center", gap: "8px", position: "relative" }}>
                         <button
+                            onClick={() => setShowNotifs(!showNotifs)}
                             style={{
                                 width: "36px", height: "36px", borderRadius: "6px",
-                                border: "1px solid var(--border-primary)", background: "var(--bg-card)",
+                                border: "1px solid var(--border-primary)", background: showNotifs ? "var(--bg-warm)" : "var(--bg-card)",
                                 cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                                color: "var(--text-muted)", position: "relative", transition: "all 0.2s",
+                                color: showNotifs ? "var(--accent-primary)" : "var(--text-muted)", position: "relative", transition: "all 0.2s",
                             }}
                             onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; e.currentTarget.style.color = "var(--text-secondary)"; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; e.currentTarget.style.color = "var(--text-muted)"; }}
+                            onMouseLeave={(e) => {
+                                if (!showNotifs) { e.currentTarget.style.borderColor = "var(--border-primary)"; e.currentTarget.style.color = "var(--text-muted)"; }
+                            }}
                         >
                             <Bell size={16} />
-                            <div style={{ position: "absolute", top: "6px", right: "6px", width: "6px", height: "6px", borderRadius: "50%", background: "var(--danger)" }} />
+                            {unreadCount > 0 && (
+                                <div style={{
+                                    position: "absolute", top: "4px", right: "4px",
+                                    minWidth: "14px", height: "14px", borderRadius: "7px",
+                                    background: "var(--danger)", color: "white",
+                                    fontSize: "9px", fontWeight: 700, display: "flex",
+                                    alignItems: "center", justifyContent: "center",
+                                    padding: "0 3px", lineHeight: 1,
+                                }}>
+                                    {unreadCount > 9 ? "9+" : unreadCount}
+                                </div>
+                            )}
                         </button>
+
+                        {/* Notification dropdown */}
+                        {showNotifs && (
+                            <div style={{
+                                position: "absolute", top: "44px", right: 0,
+                                width: "380px", maxHeight: "420px",
+                                background: "var(--bg-card)", borderRadius: "10px",
+                                border: "1px solid var(--border-secondary)",
+                                boxShadow: "0 12px 40px rgba(0,0,0,0.12)",
+                                overflow: "hidden", display: "flex", flexDirection: "column",
+                                zIndex: 100,
+                            }}>
+                                {/* Header */}
+                                <div style={{
+                                    padding: "14px 16px", borderBottom: "1px solid var(--border-primary)",
+                                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                                }}>
+                                    <h4 style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>
+                                        Notifications {unreadCount > 0 && <span style={{ fontSize: "11px", color: "var(--accent-primary)", fontWeight: 400 }}>({unreadCount} new)</span>}
+                                    </h4>
+                                    {unreadCount > 0 && (
+                                        <button
+                                            onClick={() => markAllRead.mutate()}
+                                            style={{
+                                                background: "none", border: "none", cursor: "pointer",
+                                                fontSize: "11px", color: "var(--accent-primary)", fontFamily: "inherit",
+                                                display: "flex", alignItems: "center", gap: "4px",
+                                            }}
+                                        >
+                                            <Check size={12} /> Mark all read
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Notification list */}
+                                <div style={{ flex: 1, overflowY: "auto", maxHeight: "340px" }}>
+                                    {notifications.length === 0 ? (
+                                        <div style={{ padding: "40px 16px", textAlign: "center" }}>
+                                            <Bell size={24} style={{ color: "var(--text-muted)", opacity: 0.4, marginBottom: "8px" }} />
+                                            <p style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 300 }}>No notifications</p>
+                                        </div>
+                                    ) : (
+                                        notifications.map((n: any) => {
+                                            const nStyle = notifTypeStyles[n.type] || notifTypeStyles.info;
+                                            const NotifIcon = nStyle.icon;
+                                            return (
+                                                <div
+                                                    key={n.id}
+                                                    onClick={() => { if (!n.read) markRead.mutate({ id: n.id }); }}
+                                                    style={{
+                                                        padding: "12px 16px",
+                                                        borderBottom: "1px solid var(--border-primary)",
+                                                        display: "flex", gap: "10px", alignItems: "flex-start",
+                                                        background: n.read ? "transparent" : "rgba(176,122,74,0.03)",
+                                                        cursor: n.read ? "default" : "pointer",
+                                                        transition: "background 0.15s",
+                                                    }}
+                                                >
+                                                    <div style={{
+                                                        width: "28px", height: "28px", borderRadius: "6px",
+                                                        background: `${nStyle.color}12`, display: "flex",
+                                                        alignItems: "center", justifyContent: "center", flexShrink: 0,
+                                                    }}>
+                                                        <NotifIcon size={13} style={{ color: nStyle.color }} />
+                                                    </div>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                                            <p style={{
+                                                                fontSize: "12px", fontWeight: n.read ? 400 : 600,
+                                                                color: "var(--text-primary)",
+                                                            }}>{n.title}</p>
+                                                            {!n.read && <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--accent-primary)", flexShrink: 0 }} />}
+                                                        </div>
+                                                        <p style={{
+                                                            fontSize: "11px", color: "var(--text-muted)",
+                                                            fontWeight: 300, marginTop: "2px", lineHeight: 1.4,
+                                                        }}>{n.message}</p>
+                                                        <div style={{ display: "flex", gap: "8px", marginTop: "4px", alignItems: "center" }}>
+                                                            <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{formatTimeAgo(n.createdAt)}</span>
+                                                            {n.project && (
+                                                                <span style={{
+                                                                    fontSize: "9px", padding: "1px 6px", borderRadius: "3px",
+                                                                    background: "var(--bg-secondary)", color: "var(--text-muted)",
+                                                                }}>{n.project.name}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </header>
 

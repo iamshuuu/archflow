@@ -29,6 +29,10 @@ interface TeamMember {
     billRate: number;
     targetUtil: number;
     weeklyHours: number[];
+    billableHours: number;
+    nonBillableHours: number;
+    ptoHours: number;
+    totalHours: number;
     projects: string[];
 }
 
@@ -53,20 +57,31 @@ export default function TeamPage() {
     const createMutation = trpc.team.create.useMutation({ onSuccess: () => utils.team.list.invalidate() });
 
     // Adapt DB users to UI shape
-    const members: TeamMember[] = rawMembers.map((m: any) => ({
-        id: m.id,
-        name: m.name,
-        initials: m.name.split(" ").map((p: string) => p[0]).join("").toUpperCase().slice(0, 2),
-        email: m.email,
-        phone: m.phone || "",
-        role: m.role || "Member",
-        title: m.title || "",
-        costRate: m.costRate ?? 0,
-        billRate: m.billRate ?? 0,
-        targetUtil: m.targetUtil ?? 85,
-        weeklyHours: [0, 0, 0, 0, 0, 0],
-        projects: [],
-    }));
+    const members: TeamMember[] = rawMembers.map((m: any) => {
+        const entries = m.timeEntries || [];
+        const billableHours = entries.filter((e: any) => e.billable !== false).reduce((s: number, e: any) => s + e.hours, 0);
+        const nonBillableHours = entries.filter((e: any) => e.billable === false).reduce((s: number, e: any) => s + e.hours, 0);
+        const ptoHours = entries.filter((e: any) => e.entryType === "pto").reduce((s: number, e: any) => s + e.hours, 0);
+        const totalHours = entries.reduce((s: number, e: any) => s + e.hours, 0);
+        return {
+            id: m.id,
+            name: m.name,
+            initials: m.name.split(" ").map((p: string) => p[0]).join("").toUpperCase().slice(0, 2),
+            email: m.email,
+            phone: m.phone || "",
+            role: m.role || "Member",
+            title: m.title || "",
+            costRate: m.costRate ?? 0,
+            billRate: m.billRate ?? 0,
+            targetUtil: m.targetUtil ?? 85,
+            weeklyHours: [0, 0, 0, 0, 0, 0],
+            billableHours,
+            nonBillableHours,
+            ptoHours,
+            totalHours,
+            projects: [],
+        };
+    });
 
     const [search, setSearch] = useState("");
     const [view, setView] = useState<"directory" | "utilization">("directory");
@@ -245,24 +260,25 @@ export default function TeamPage() {
                 </div>
             )}
 
-            {/* Utilization heatmap view */}
+            {/* Utilization breakdown view */}
             {view === "utilization" && (
                 <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
                             <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
                                 <th style={{ padding: "10px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", minWidth: "180px" }}>Team Member</th>
-                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Target</th>
-                                {weekLabels.map((w) => (
-                                    <th key={w} style={{ padding: "10px 8px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", width: "70px" }}>{w}</th>
-                                ))}
-                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Avg</th>
+                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Billable</th>
+                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Non-Billable</th>
+                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>PTO</th>
+                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Total</th>
+                                <th style={{ padding: "10px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", minWidth: "150px" }}>Utilization</th>
                             </tr>
                         </thead>
                         <tbody>
                             {filtered.map((m) => {
-                                const avgHours = m.weeklyHours.reduce((a, b) => a + b, 0) / m.weeklyHours.length;
-                                const avgPct = Math.round((avgHours / 40) * 100);
+                                const utilPct = m.totalHours > 0 ? Math.round((m.billableHours / m.totalHours) * 100) : 0;
+                                const billPct = m.totalHours > 0 ? Math.round((m.billableHours / m.totalHours) * 100) : 0;
+                                const nonBillPct = m.totalHours > 0 ? Math.round((m.nonBillableHours / m.totalHours) * 100) : 0;
                                 return (
                                     <tr key={m.id} style={{ borderBottom: "1px solid var(--border-primary)" }}>
                                         <td style={{ padding: "12px 14px" }}>
@@ -274,24 +290,34 @@ export default function TeamPage() {
                                                 </div>
                                             </div>
                                         </td>
-                                        <td style={{ padding: "12px 14px", textAlign: "center", fontSize: "12px", color: "var(--text-muted)" }}>{m.targetUtil}%</td>
-                                        {m.weeklyHours.map((h, wi) => {
-                                            const pct = Math.round((h / 40) * 100);
-                                            return (
-                                                <td key={wi} style={{ padding: "6px 4px", textAlign: "center" }}>
-                                                    <div style={{
-                                                        padding: "8px 4px", borderRadius: "4px",
-                                                        background: pct >= 100 ? "rgba(176,80,64,0.1)" : pct >= 85 ? "rgba(90,122,70,0.1)" : pct >= 70 ? "rgba(176,122,74,0.08)" : "rgba(176,138,48,0.08)",
-                                                        color: getUtilColor(pct),
-                                                        fontSize: "12px", fontWeight: 500,
-                                                    }}>
-                                                        {h}h
-                                                    </div>
-                                                </td>
-                                            );
-                                        })}
                                         <td style={{ padding: "12px 14px", textAlign: "center" }}>
-                                            <span style={{ fontSize: "13px", fontWeight: 600, color: getUtilColor(avgPct), fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{avgPct}%</span>
+                                            <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--success)" }}>{m.billableHours}h</span>
+                                        </td>
+                                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                                            <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-muted)" }}>{m.nonBillableHours}h</span>
+                                        </td>
+                                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                                            <span style={{ fontSize: "13px", fontWeight: 500, color: m.ptoHours > 0 ? "#6B8DD6" : "var(--text-muted)" }}>{m.ptoHours}h</span>
+                                            {m.ptoHours > 0 && <span style={{ fontSize: "9px", color: "#6B8DD6", display: "block" }}>{Math.round(m.ptoHours / 8)}d</span>}
+                                        </td>
+                                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                                            <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{m.totalHours}h</span>
+                                        </td>
+                                        <td style={{ padding: "12px 14px" }}>
+                                            {m.totalHours > 0 ? (
+                                                <div>
+                                                    <div style={{ display: "flex", height: "8px", borderRadius: "4px", overflow: "hidden", background: "var(--bg-secondary)" }}>
+                                                        <div style={{ width: `${billPct}%`, background: "var(--success)", transition: "width 0.3s" }} />
+                                                        <div style={{ width: `${nonBillPct}%`, background: "var(--warning)", transition: "width 0.3s" }} />
+                                                    </div>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "3px" }}>
+                                                        <span style={{ fontSize: "10px", color: getUtilColor(utilPct), fontWeight: 600 }}>{utilPct}% billable</span>
+                                                        <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>target: {m.targetUtil}%</span>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>No entries</span>
+                                            )}
                                         </td>
                                     </tr>
                                 );
@@ -301,116 +327,119 @@ export default function TeamPage() {
                 </div>
             )}
 
+
             {/* ═══ Add Member Modal ═══ */}
-            {showAdd && (
-                <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setShowAdd(false); resetForm(); }}>
-                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(6px)" }} />
-                    <div onClick={(e) => e.stopPropagation()}
-                        style={{ position: "relative", width: "520px", maxHeight: "85vh", overflow: "auto", background: "var(--bg-card)", borderRadius: "14px", border: "1px solid var(--border-secondary)", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}
-                    >
-                        {/* Header */}
-                        <div style={{ padding: "22px 28px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <div>
-                                <h2 style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Add Team Member</h2>
-                                <p style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>Invite a new member to your firm</p>
-                            </div>
-                            <button onClick={() => { setShowAdd(false); resetForm(); }}
-                                style={{ width: "30px", height: "30px", borderRadius: "6px", border: "1px solid var(--border-primary)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
-                                <X size={14} />
-                            </button>
-                        </div>
-
-                        {/* Body */}
-                        <div style={{ padding: "24px 28px" }}>
-                            {/* Name & Email */}
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+            {
+                showAdd && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setShowAdd(false); resetForm(); }}>
+                        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(6px)" }} />
+                        <div onClick={(e) => e.stopPropagation()}
+                            style={{ position: "relative", width: "520px", maxHeight: "85vh", overflow: "auto", background: "var(--bg-card)", borderRadius: "14px", border: "1px solid var(--border-secondary)", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}
+                        >
+                            {/* Header */}
+                            <div style={{ padding: "22px 28px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                 <div>
-                                    <label style={labelStyle}>Full Name *</label>
-                                    <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="e.g. Jordan Lee"
-                                        style={fieldStyle}
-                                        onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
-                                        onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
+                                    <h2 style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Add Team Member</h2>
+                                    <p style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>Invite a new member to your firm</p>
                                 </div>
-                                <div>
-                                    <label style={labelStyle}>Email *</label>
-                                    <input type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} placeholder="jordan@studio.com"
-                                        style={fieldStyle}
-                                        onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
-                                        onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
-                                </div>
+                                <button onClick={() => { setShowAdd(false); resetForm(); }}
+                                    style={{ width: "30px", height: "30px", borderRadius: "6px", border: "1px solid var(--border-primary)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+                                    <X size={14} />
+                                </button>
                             </div>
 
-                            {/* Phone & Role */}
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
-                                <div>
-                                    <label style={labelStyle}>Phone</label>
-                                    <input type="tel" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} placeholder="(503) 555-0000"
-                                        style={fieldStyle}
-                                        onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
-                                        onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
+                            {/* Body */}
+                            <div style={{ padding: "24px 28px" }}>
+                                {/* Name & Email */}
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                                    <div>
+                                        <label style={labelStyle}>Full Name *</label>
+                                        <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="e.g. Jordan Lee"
+                                            style={fieldStyle}
+                                            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
+                                            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
+                                    </div>
+                                    <div>
+                                        <label style={labelStyle}>Email *</label>
+                                        <input type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} placeholder="jordan@studio.com"
+                                            style={fieldStyle}
+                                            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
+                                            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
+                                    </div>
                                 </div>
-                                <div>
-                                    <label style={labelStyle}>Role</label>
-                                    <select value={formRole} onChange={(e) => setFormRole(e.target.value)}
+
+                                {/* Phone & Role */}
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                                    <div>
+                                        <label style={labelStyle}>Phone</label>
+                                        <input type="tel" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} placeholder="(503) 555-0000"
+                                            style={fieldStyle}
+                                            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
+                                            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
+                                    </div>
+                                    <div>
+                                        <label style={labelStyle}>Role</label>
+                                        <select value={formRole} onChange={(e) => setFormRole(e.target.value)}
+                                            style={{ ...fieldStyle, cursor: "pointer" }}>
+                                            {roles.map((r) => <option key={r} value={r}>{r}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Title */}
+                                <div style={{ marginBottom: "18px" }}>
+                                    <label style={labelStyle}>Title *</label>
+                                    <select value={formTitle} onChange={(e) => setFormTitle(e.target.value)}
                                         style={{ ...fieldStyle, cursor: "pointer" }}>
-                                        {roles.map((r) => <option key={r} value={r}>{r}</option>)}
+                                        <option value="">Select title…</option>
+                                        {titles.map((t) => <option key={t} value={t}>{t}</option>)}
                                     </select>
                                 </div>
-                            </div>
 
-                            {/* Title */}
-                            <div style={{ marginBottom: "18px" }}>
-                                <label style={labelStyle}>Title *</label>
-                                <select value={formTitle} onChange={(e) => setFormTitle(e.target.value)}
-                                    style={{ ...fieldStyle, cursor: "pointer" }}>
-                                    <option value="">Select title…</option>
-                                    {titles.map((t) => <option key={t} value={t}>{t}</option>)}
-                                </select>
-                            </div>
-
-                            {/* Rates */}
-                            <div style={{ padding: "18px", borderRadius: "8px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)", marginBottom: "22px" }}>
-                                <p style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "14px" }}>Billing & Rates</p>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}>
-                                    <div>
-                                        <label style={labelStyle}>Cost Rate ($/hr)</label>
-                                        <input type="number" min="0" value={formCostRate} onChange={(e) => setFormCostRate(parseInt(e.target.value) || 0)}
-                                            style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
+                                {/* Rates */}
+                                <div style={{ padding: "18px", borderRadius: "8px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)", marginBottom: "22px" }}>
+                                    <p style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "14px" }}>Billing & Rates</p>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}>
+                                        <div>
+                                            <label style={labelStyle}>Cost Rate ($/hr)</label>
+                                            <input type="number" min="0" value={formCostRate} onChange={(e) => setFormCostRate(parseInt(e.target.value) || 0)}
+                                                style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
+                                        </div>
+                                        <div>
+                                            <label style={labelStyle}>Bill Rate ($/hr)</label>
+                                            <input type="number" min="0" value={formBillRate} onChange={(e) => setFormBillRate(parseInt(e.target.value) || 0)}
+                                                style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
+                                        </div>
+                                        <div>
+                                            <label style={labelStyle}>Target Util %</label>
+                                            <input type="number" min="0" max="100" value={formTargetUtil} onChange={(e) => setFormTargetUtil(parseInt(e.target.value) || 0)}
+                                                style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
+                                        </div>
                                     </div>
-                                    <div>
-                                        <label style={labelStyle}>Bill Rate ($/hr)</label>
-                                        <input type="number" min="0" value={formBillRate} onChange={(e) => setFormBillRate(parseInt(e.target.value) || 0)}
-                                            style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
-                                    </div>
-                                    <div>
-                                        <label style={labelStyle}>Target Util %</label>
-                                        <input type="number" min="0" max="100" value={formTargetUtil} onChange={(e) => setFormTargetUtil(parseInt(e.target.value) || 0)}
-                                            style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
-                                    </div>
+                                    {formCostRate > 0 && formBillRate > 0 && (
+                                        <p style={{ marginTop: "10px", fontSize: "11px", color: "var(--text-muted)" }}>
+                                            Multiplier: <strong style={{ color: "var(--accent-primary)" }}>{(formBillRate / formCostRate).toFixed(2)}x</strong> · Margin: <strong style={{ color: "var(--success)" }}>{Math.round(((formBillRate - formCostRate) / formBillRate) * 100)}%</strong>
+                                        </p>
+                                    )}
                                 </div>
-                                {formCostRate > 0 && formBillRate > 0 && (
-                                    <p style={{ marginTop: "10px", fontSize: "11px", color: "var(--text-muted)" }}>
-                                        Multiplier: <strong style={{ color: "var(--accent-primary)" }}>{(formBillRate / formCostRate).toFixed(2)}x</strong> · Margin: <strong style={{ color: "var(--success)" }}>{Math.round(((formBillRate - formCostRate) / formBillRate) * 100)}%</strong>
-                                    </p>
-                                )}
-                            </div>
 
-                            {/* Actions */}
-                            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                                <button onClick={() => { setShowAdd(false); resetForm(); }}
-                                    style={{ padding: "11px 20px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>
-                                    Cancel
-                                </button>
-                                <button onClick={handleAdd}
-                                    disabled={!formName.trim() || !formEmail.trim() || !formTitle}
-                                    style={{ padding: "11px 24px", borderRadius: "6px", border: "none", background: (formName.trim() && formEmail.trim() && formTitle) ? "var(--accent-primary)" : "var(--bg-tertiary)", color: (formName.trim() && formEmail.trim() && formTitle) ? "white" : "var(--text-muted)", fontSize: "13px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", cursor: (formName.trim() && formEmail.trim() && formTitle) ? "pointer" : "not-allowed", transition: "all 0.2s" }}>
-                                    Add Member
-                                </button>
+                                {/* Actions */}
+                                <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                                    <button onClick={() => { setShowAdd(false); resetForm(); }}
+                                        style={{ padding: "11px 20px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>
+                                        Cancel
+                                    </button>
+                                    <button onClick={handleAdd}
+                                        disabled={!formName.trim() || !formEmail.trim() || !formTitle}
+                                        style={{ padding: "11px 24px", borderRadius: "6px", border: "none", background: (formName.trim() && formEmail.trim() && formTitle) ? "var(--accent-primary)" : "var(--bg-tertiary)", color: (formName.trim() && formEmail.trim() && formTitle) ? "white" : "var(--text-muted)", fontSize: "13px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", cursor: (formName.trim() && formEmail.trim() && formTitle) ? "pointer" : "not-allowed", transition: "all 0.2s" }}>
+                                        Add Member
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 }

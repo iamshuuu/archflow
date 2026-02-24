@@ -14,10 +14,12 @@ model Organization {
   name      String
   createdAt DateTime @default(now())
 
-  users    User[]
-  clients  Client[]
-  projects Project[]
-  invoices Invoice[]
+  users              User[]
+  clients            Client[]
+  projects           Project[]
+  invoices           Invoice[]
+  invoiceTemplates   InvoiceTemplate[]
+  projectTemplates   ProjectTemplate[]
 }
 
 // ─── User ───
@@ -38,7 +40,11 @@ model User {
   orgId String
   org   Organization @relation(fields: [orgId], references: [id])
 
-  timeEntries TimeEntry[]
+  timeEntries    TimeEntry[]
+  notifications  Notification[]
+  expenses       Expense[]
+  allocations    Allocation[]
+  tasks          Task[]
 }
 
 // ─── Client ───
@@ -66,9 +72,10 @@ model Project {
   phase         String   @default("")
   progress      Int      @default(0)
   contractValue Float    @default(0)
-  startDate     String   @default("")
-  endDate       String   @default("")
-  createdAt     DateTime @default(now())
+  startDate      String   @default("")
+  endDate        String   @default("")
+  pipelineStage  String   @default("lead") // lead | proposal | negotiation | won | lost
+  createdAt      DateTime @default(now())
 
   clientId String
   client   Client @relation(fields: [clientId], references: [id])
@@ -76,9 +83,16 @@ model Project {
   orgId String
   org   Organization @relation(fields: [orgId], references: [id])
 
-  phases      Phase[]
-  timeEntries TimeEntry[]
-  invoices    Invoice[]
+  templateId String?
+
+  phases        Phase[]
+  timeEntries   TimeEntry[]
+  invoices      Invoice[]
+  notifications Notification[]
+  milestones    Milestone[]
+  expenses      Expense[]
+  allocations   Allocation[]
+  tasks         Task[]
 }
 
 // ─── Phase ───
@@ -89,21 +103,44 @@ model Phase {
   budgetHours  Float  @default(0)
   budgetAmount Float  @default(0)
   feeType      String @default("hourly") // hourly | fixed | not-to-exceed
+  startDate    String @default("") // YYYY-MM-DD
+  endDate      String @default("") // YYYY-MM-DD
+  color        String @default("") // hex color for Gantt bar
 
   projectId String
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   timeEntries TimeEntry[]
+  milestones  Milestone[]
+  tasks       Task[]
+}
+
+// ─── Milestone ───
+
+model Milestone {
+  id   String  @id @default(cuid())
+  name String
+  date String  // YYYY-MM-DD
+  done Boolean @default(false)
+
+  phaseId String
+  phase   Phase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
 }
 
 // ─── Time Entry ───
 
 model TimeEntry {
-  id     String @id @default(cuid())
-  date   String // YYYY-MM-DD
-  hours  Float
-  notes  String @default("")
-  status String @default("draft") // draft | submitted | approved
+  id           String  @id @default(cuid())
+  date         String  // YYYY-MM-DD
+  hours        Float
+  notes        String  @default("")
+  status       String  @default("draft") // draft | submitted | approved
+  billable     Boolean @default(true)
+  entryType    String  @default("regular") // regular | pto | holiday | admin
+  activityType String  @default("design") // design | project-mgmt | site-visit | meeting | admin | other
 
   userId String
   user   User @relation(fields: [userId], references: [id])
@@ -118,12 +155,14 @@ model TimeEntry {
 // ─── Invoice ───
 
 model Invoice {
-  id      String @id @default(cuid())
-  number  String @unique
-  amount  Float  @default(0)
-  date    String
-  dueDate String
-  status  String @default("draft") // draft | sent | viewed | paid | overdue
+  id         String @id @default(cuid())
+  number     String @unique
+  amount     Float  @default(0)
+  date       String
+  dueDate    String
+  status     String @default("draft") // draft | sent | viewed | paid | overdue
+  notes      String @default("") // freeform notes on the invoice
+  paymentUrl String @default("") // Stripe/PayPal link
 
   clientId String
   client   Client @relation(fields: [clientId], references: [id])
@@ -137,6 +176,25 @@ model Invoice {
   lineItems InvoiceLineItem[]
 }
 
+// ─── Invoice Template ───
+
+model InvoiceTemplate {
+  id          String @id @default(cuid())
+  name        String @default("Default")
+  logo        String @default("") // URL or base64
+  companyName String @default("")
+  address     String @default("")
+  phone       String @default("")
+  email       String @default("")
+  headerText  String @default("")
+  footerText  String @default("Payment is due within 30 days.")
+  accentColor String @default("#B07A4A")
+  isDefault   Boolean @default(false)
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+}
+
 // ─── Invoice Line Item ───
 
 model InvoiceLineItem {
@@ -147,4 +205,94 @@ model InvoiceLineItem {
 
   invoiceId String
   invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// ─── Notification ───
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String   @default("budget_alert") // budget_alert | budget_warning | budget_critical | info
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+}
+
+// ─── Expense ───
+
+model Expense {
+  id          String   @id @default(cuid())
+  category    String   @default("other") // travel | meals | materials | software | mileage | other
+  description String
+  amount      Float
+  date        String   // YYYY-MM-DD
+  receipt     String   @default("") // file path or URL
+  billable    Boolean  @default(true)
+  status      String   @default("pending") // pending | approved | rejected | reimbursed
+  mileage     Float    @default(0) // miles driven (for mileage category)
+  mileageRate Float    @default(0.67) // IRS rate per mile
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+
+  phaseId String?
+}
+
+// ─── Allocation ───
+
+model Allocation {
+  id           String @id @default(cuid())
+  week         String // YYYY-Www (ISO week), e.g. "2026-W09"
+  plannedHours Float  @default(0)
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  @@unique([userId, projectId, week])
+}
+
+// ─── Project Template ───
+
+model ProjectTemplate {
+  id             String @id @default(cuid())
+  name           String
+  description    String @default("")
+  defaultPhases  String @default("[]") // JSON array of phase names
+  defaultType    String @default("Commercial")
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+}
+
+// ─── Task ───
+
+model Task {
+  id        String @id @default(cuid())
+  title     String
+  status    String @default("todo") // todo | in-progress | review | done
+  dueDate   String @default("")
+  sortOrder Int    @default(0)
+
+  phaseId String
+  phase   Phase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  assigneeId String?
+  assignee   User? @relation(fields: [assigneeId], references: [id])
 }
