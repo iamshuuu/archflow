@@ -19,6 +19,12 @@ import {
     Loader2,
     CalendarRange,
     Receipt,
+    ListTodo,
+    Trash2,
+    Circle,
+    CircleDot,
+    CircleCheck,
+    Eye,
 } from "lucide-react";
 import GanttChart from "@/app/components/GanttChart";
 
@@ -65,13 +71,41 @@ export default function ProjectDetailPage() {
     const { data: rawProject, isLoading } = trpc.project.getById.useQuery({ id: projectId }, { enabled: !!projectId });
 
     const [activePhase, setActivePhase] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<"overview" | "gantt" | "expenses">("overview");
+    const [activeTab, setActiveTab] = useState<"overview" | "gantt" | "expenses" | "tasks">("overview");
+    const [showNewTask, setShowNewTask] = useState(false);
+    const [newTask, setNewTask] = useState({ title: "", phaseId: "", assigneeId: "", dueDate: "" });
+
+    const utils = trpc.useUtils();
 
     // Fetch project expenses
     const { data: projectExpenses = [] } = trpc.expense.list.useQuery(
         { projectId: projectId },
         { enabled: !!projectId }
     );
+
+    // Fetch tasks
+    const { data: tasks = [] } = trpc.project.listTasks.useQuery(
+        { projectId },
+        { enabled: !!projectId }
+    );
+    const { data: teamMembers = [] } = trpc.team.list.useQuery();
+    const createTask = trpc.project.createTask.useMutation({
+        onSuccess: () => { utils.project.listTasks.invalidate(); setNewTask({ title: "", phaseId: "", assigneeId: "", dueDate: "" }); setShowNewTask(false); },
+    });
+    const updateTask = trpc.project.updateTask.useMutation({
+        onSuccess: () => utils.project.listTasks.invalidate(),
+    });
+    const deleteTask = trpc.project.deleteTask.useMutation({
+        onSuccess: () => utils.project.listTasks.invalidate(),
+    });
+
+    const taskStatusCycle = ["todo", "in-progress", "review", "done"];
+    const taskStatusConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+        "todo": { label: "To Do", color: "var(--text-muted)", bg: "var(--bg-secondary)", icon: <Circle size={12} /> },
+        "in-progress": { label: "In Progress", color: "var(--info)", bg: "rgba(90,122,144,0.08)", icon: <CircleDot size={12} /> },
+        "review": { label: "Review", color: "var(--warning)", bg: "rgba(176,138,48,0.08)", icon: <Eye size={12} /> },
+        "done": { label: "Done", color: "var(--success)", bg: "rgba(90,122,70,0.08)", icon: <CircleCheck size={12} /> },
+    };
 
     // Adapt DB data to UI shape
     const project: ProjectDetail | null = rawProject ? {
@@ -186,7 +220,7 @@ export default function ProjectDetailPage() {
 
             {/* Tab bar */}
             <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "1px solid var(--border-primary)" }}>
-                {(["overview", "gantt", "expenses"] as const).map((tab) => (
+                {(["overview", "gantt", "expenses", "tasks"] as const).map((tab) => (
                     <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
@@ -412,6 +446,110 @@ export default function ProjectDetailPage() {
                             ))}
                         </tbody>
                     </table>
+                </div>
+            )}
+
+            {/* Tasks tab */}
+            {activeTab === "tasks" && (
+                <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                    <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Tasks</h3>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>{(tasks as any[]).length} tasks · {(tasks as any[]).filter((t: any) => t.status === "done").length} completed</p>
+                        </div>
+                        <button onClick={() => setShowNewTask(!showNewTask)}
+                            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer" }}>
+                            <Plus size={13} /> Add Task
+                        </button>
+                    </div>
+
+                    {/* New task form */}
+                    {showNewTask && (
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                                <div style={{ flex: 2, minWidth: "180px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Title *</label>
+                                    <input type="text" value={newTask.title} onChange={(e) => setNewTask(p => ({ ...p, title: e.target.value }))} placeholder="Task title" style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                </div>
+                                <div style={{ flex: 1, minWidth: "120px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Phase *</label>
+                                    <select value={newTask.phaseId} onChange={(e) => setNewTask(p => ({ ...p, phaseId: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                        <option value="">Select phase...</option>
+                                        {project.phases.map((ph: any) => <option key={ph.id} value={ph.id}>{ph.name}</option>)}
+                                    </select>
+                                </div>
+                                <div style={{ flex: 1, minWidth: "120px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Assignee</label>
+                                    <select value={newTask.assigneeId} onChange={(e) => setNewTask(p => ({ ...p, assigneeId: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                        <option value="">Unassigned</option>
+                                        {(teamMembers as any[]).map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                    </select>
+                                </div>
+                                <div style={{ flex: 1, minWidth: "120px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Due Date</label>
+                                    <input type="date" value={newTask.dueDate} onChange={(e) => setNewTask(p => ({ ...p, dueDate: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                </div>
+                                <button onClick={() => { if (!newTask.title || !newTask.phaseId) return; createTask.mutate({ projectId, phaseId: newTask.phaseId, title: newTask.title, assigneeId: newTask.assigneeId || undefined, dueDate: newTask.dueDate }); }}
+                                    disabled={!newTask.title || !newTask.phaseId || createTask.isPending}
+                                    style={{ padding: "8px 16px", borderRadius: "5px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !newTask.title || !newTask.phaseId ? 0.5 : 1, whiteSpace: "nowrap" }}>
+                                    {createTask.isPending ? "Adding..." : "Add"}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Task list */}
+                    {(tasks as any[]).length === 0 ? (
+                        <div style={{ padding: "40px", textAlign: "center" }}>
+                            <ListTodo size={24} style={{ color: "var(--text-muted)", marginBottom: "8px" }} />
+                            <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No tasks yet. Add your first task above.</p>
+                        </div>
+                    ) : (
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                            <thead>
+                                <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                                    {["Status", "Task", "Phase", "Assignee", "Due Date", ""].map(h => (
+                                        <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(tasks as any[]).map((task: any) => {
+                                    const tsc = taskStatusConfig[task.status] || taskStatusConfig["todo"];
+                                    return (
+                                        <tr key={task.id} style={{ borderBottom: "1px solid var(--border-primary)" }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                                            <td style={{ padding: "10px 14px" }}>
+                                                <button onClick={() => { const idx = taskStatusCycle.indexOf(task.status); const next = taskStatusCycle[(idx + 1) % taskStatusCycle.length]; updateTask.mutate({ id: task.id, status: next }); }}
+                                                    style={{ border: "none", cursor: "pointer", color: tsc.color, display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", background: tsc.bg }}>
+                                                    {tsc.icon} {tsc.label}
+                                                </button>
+                                            </td>
+                                            <td style={{ padding: "10px 14px", fontSize: "12px", fontWeight: 500, color: task.status === "done" ? "var(--text-muted)" : "var(--text-primary)", textDecoration: task.status === "done" ? "line-through" : "none" }}>{task.title}</td>
+                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{task.phase?.name || "—"}</td>
+                                            <td style={{ padding: "10px 14px" }}>
+                                                {task.assignee ? (
+                                                    <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "10px", background: "rgba(176,122,74,0.08)", color: "var(--accent-primary)", fontWeight: 500 }}>{task.assignee.name}</span>
+                                                ) : (
+                                                    <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>Unassigned</span>
+                                                )}
+                                            </td>
+                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{task.dueDate || "—"}</td>
+                                            <td style={{ padding: "10px 14px" }}>
+                                                <button onClick={() => deleteTask.mutate({ id: task.id })}
+                                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}
+                                                    onMouseEnter={(e) => { e.currentTarget.style.color = "var(--danger)"; }}
+                                                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}>
+                                                    <Trash2 size={13} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    )}
                 </div>
             )}
         </div>

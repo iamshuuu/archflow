@@ -1,6 +1,6 @@
 "use client";
 
-import { TrendingUp, TrendingDown, ArrowUpRight, Clock, DollarSign, FolderKanban, Users } from "lucide-react";
+import { TrendingUp, TrendingDown, ArrowUpRight, Clock, DollarSign, FolderKanban, Users, Inbox, FileText, Send, AlertTriangle } from "lucide-react";
 import { trpc } from "@/app/providers";
 import { useSession } from "next-auth/react";
 
@@ -9,6 +9,8 @@ export default function DashboardPage() {
     const { data: rawProjects = [] } = trpc.project.list.useQuery();
     const { data: rawTeam = [] } = trpc.team.list.useQuery();
     const { data: rawInvoices = [] } = trpc.invoice.list.useQuery();
+    const { data: rawClients = [] } = trpc.clients.list.useQuery();
+    const { data: rawTime = [] } = trpc.time.list.useQuery();
 
     // Compute stats from real data
     const activeProjects = rawProjects.filter((p: any) => p.status === "active");
@@ -245,6 +247,55 @@ export default function DashboardPage() {
                             ))}
                         </div>
                     )}
+                </div>
+
+                {/* Smart Inbox */}
+                <div style={{ gridColumn: "span 2", padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                            <div style={{ width: "32px", height: "32px", borderRadius: "6px", background: "rgba(176,122,74,0.06)", border: "1px solid rgba(176,122,74,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <Inbox size={14} style={{ color: "var(--accent-primary)" }} />
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Smart Inbox</h3>
+                                <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "1px" }}>Items requiring your attention</p>
+                            </div>
+                        </div>
+                    </div>
+                    {(() => {
+                        const items: { type: string; label: string; badge: string; color: string; bg: string; href: string }[] = [];
+                        // Overdue invoices
+                        (rawInvoices as any[]).filter((i: any) => i.status === "overdue").forEach((i: any) => items.push({ type: "Invoice", label: `Invoice #${i.number || i.id.slice(0, 6)} is overdue`, badge: "Overdue", color: "var(--danger)", bg: "rgba(176,80,64,0.08)", href: "/dashboard/invoices" }));
+                        // Submitted timesheets awaiting review
+                        (rawTime as any[]).filter((t: any) => t.status === "submitted").forEach((t: any) => items.push({ type: "Timesheet", label: `${t.user?.name || "Team member"} submitted ${t.hours}h for review`, badge: "Review", color: "var(--warning)", bg: "rgba(176,138,48,0.08)", href: "/dashboard/time" }));
+                        // Draft proposals
+                        (rawClients as any[]).forEach((c: any) => (c.proposals || []).filter((p: any) => p.status === "draft").forEach((p: any) => items.push({ type: "Proposal", label: `Draft proposal "${p.title}" for ${c.name}`, badge: "Draft", color: "var(--info)", bg: "rgba(90,122,144,0.08)", href: "/dashboard/clients" })));
+                        // Unpaid invoices
+                        (rawInvoices as any[]).filter((i: any) => i.status === "sent" || i.status === "viewed").forEach((i: any) => items.push({ type: "Invoice", label: `Invoice #${i.number || i.id.slice(0, 6)} awaiting payment`, badge: "Pending", color: "var(--text-muted)", bg: "var(--bg-secondary)", href: "/dashboard/invoices" }));
+
+                        return items.length === 0 ? (
+                            <div style={{ padding: "20px 0", textAlign: "center" }}>
+                                <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>All clear — no pending items.</p>
+                            </div>
+                        ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                {items.slice(0, 8).map((item, i) => (
+                                    <a key={i} href={item.href} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: "6px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)", textDecoration: "none" }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                            <span style={{ fontSize: "9px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", color: item.color, background: item.bg }}>{item.type}</span>
+                                            <span style={{ fontSize: "12px", color: "var(--text-primary)", fontWeight: 400 }}>{item.label}</span>
+                                        </div>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                            <span style={{ fontSize: "9px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", color: item.color, background: item.bg }}>{item.badge}</span>
+                                            <ArrowUpRight size={12} style={{ color: "var(--text-muted)" }} />
+                                        </div>
+                                    </a>
+                                ))}
+                            </div>
+                        );
+                    })()}
                 </div>
 
                 {/* Quick actions */}

@@ -14,12 +14,74 @@ model Organization {
   name      String
   createdAt DateTime @default(now())
 
+  // Settings — Organization Info
+  address              String @default("")
+  website              String @default("")
+  phone                String @default("")
+  email                String @default("")
+  logoUrl              String @default("")
+  clientEmailSignature String @default("")
+
+  // Settings — Regional Preferences
+  timezone          String @default("America/New_York")
+  locale            String @default("en-US")
+  currency          String @default("USD")
+  unitOfMeasurement String @default("feet") // feet | meters
+
+  // Settings — Financial Configuration
+  overheadCosts       Float @default(0)
+  workingHoursPerYear Int   @default(2087)
+  targetUtilization   Float @default(75)
+  targetRealization   Float @default(65)
+
+  // Settings — Permissions (JSON maps role -> feature -> boolean)
+  permissionsJson String @default("{}")
+
   users              User[]
   clients            Client[]
   projects           Project[]
   invoices           Invoice[]
   invoiceTemplates   InvoiceTemplate[]
   projectTemplates   ProjectTemplate[]
+  proposals          Proposal[]
+  timeOffPolicies    TimeOffPolicy[]
+  holidays           Holiday[]
+  defaultRoles       DefaultRole[]
+}
+
+// ─── Time Off Policy ───
+
+model TimeOffPolicy {
+  id          String @id @default(cuid())
+  name        String // e.g. "Annual PTO", "Sick Leave"
+  type        String @default("pto") // pto | sick | personal | other
+  daysPerYear Float  @default(0)
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+}
+
+// ─── Holiday ───
+
+model Holiday {
+  id   String @id @default(cuid())
+  name String // e.g. "Independence Day"
+  date String // YYYY-MM-DD
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+}
+
+// ─── Default Role (billing rates) ───
+
+model DefaultRole {
+  id              String @id @default(cuid())
+  name            String // e.g. "Principal", "Project Manager", "Intern"
+  defaultBillRate Float  @default(0)
+  defaultCostRate Float  @default(0)
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
 }
 
 // ─── User ───
@@ -40,26 +102,54 @@ model User {
   orgId String
   org   Organization @relation(fields: [orgId], references: [id])
 
-  timeEntries    TimeEntry[]
-  notifications  Notification[]
-  expenses       Expense[]
-  allocations    Allocation[]
-  tasks          Task[]
+  timeEntries            TimeEntry[]
+  notifications          Notification[]
+  expenses               Expense[]
+  allocations            Allocation[]
+  tasks                  Task[]
+  timeOffRequests        TimeOffRequest[]
+  timesheetSubmissions   TimesheetSubmission[]
 }
 
 // ─── Client ───
 
 model Client {
-  id    String @id @default(cuid())
-  name  String
-  email String @default("")
-  phone String @default("")
+  id          String @id @default(cuid())
+  name        String
+  email       String @default("")
+  phone       String @default("")
+  address     String @default("")
+  website     String @default("")
+  notes       String @default("")
+  industry    String @default("")
+  status      String @default("active") // active | inactive | prospect
+  contactName String @default("")
+  createdAt   DateTime @default(now())
 
   orgId String
   org   Organization @relation(fields: [orgId], references: [id])
 
-  projects Project[]
-  invoices Invoice[]
+  projects  Project[]
+  invoices  Invoice[]
+  proposals Proposal[]
+}
+
+// ─── Proposal ───
+
+model Proposal {
+  id          String   @id @default(cuid())
+  title       String
+  amount      Float    @default(0)
+  status      String   @default("draft") // draft | sent | accepted | declined
+  sentDate    String   @default("")
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
 }
 
 // ─── Project ───
@@ -150,6 +240,45 @@ model TimeEntry {
 
   phaseId String
   phase   Phase @relation(fields: [phaseId], references: [id])
+}
+
+// ─── Time Off Request ───
+
+model TimeOffRequest {
+  id         String   @id @default(cuid())
+  type       String   @default("pto") // pto | sick | personal | other
+  startDate  String   // YYYY-MM-DD
+  endDate    String   // YYYY-MM-DD
+  hours      Float    @default(8)
+  status     String   @default("pending") // pending | approved | rejected
+  notes      String   @default("")
+  reviewedBy String   @default("")
+  reviewedAt String   @default("")
+  createdAt  DateTime @default(now())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  orgId String
+}
+
+// ─── Timesheet Submission ───
+
+model TimesheetSubmission {
+  id          String   @id @default(cuid())
+  week        String   // ISO week e.g. "2025-W08"
+  status      String   @default("draft") // draft | submitted | approved | rejected
+  totalHours  Float    @default(0)
+  submittedAt String   @default("")
+  reviewedBy  String   @default("")
+  reviewedAt  String   @default("")
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  orgId String
 }
 
 // ─── Invoice ───
