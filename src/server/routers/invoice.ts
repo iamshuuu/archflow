@@ -20,6 +20,7 @@ export const invoiceRouter = router({
             dueDate: z.string(),
             notes: z.string().default(""),
             paymentUrl: z.string().default(""),
+            paymentTerms: z.string().default("net30"),
             lineItems: z.array(z.object({ description: z.string(), qty: z.number(), rate: z.number() })),
         }))
         .mutation(async ({ ctx, input }) => {
@@ -32,7 +33,7 @@ export const invoiceRouter = router({
                 data: {
                     number, amount, date: input.date, dueDate: input.dueDate, status: "draft",
                     clientId: input.clientId, projectId: input.projectId, orgId: user.orgId,
-                    notes: input.notes, paymentUrl: input.paymentUrl,
+                    notes: input.notes, paymentUrl: input.paymentUrl, paymentTerms: input.paymentTerms,
                     lineItems: { create: input.lineItems },
                 },
                 include: { client: true, project: true, lineItems: true },
@@ -43,6 +44,101 @@ export const invoiceRouter = router({
         .input(z.object({ id: z.string(), status: z.string() }))
         .mutation(async ({ ctx, input }) => {
             return ctx.db.invoice.update({ where: { id: input.id }, data: { status: input.status } });
+        }),
+
+    // ─── Unbilled Work ───
+    unbilledWork: protectedProcedure.query(async ({ ctx }) => {
+        const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+        if (!user) return [];
+        // Get all billable time entries
+        const entries = await ctx.db.timeEntry.findMany({
+            where: { project: { orgId: user.orgId }, billable: true },
+            include: { user: { select: { name: true, billRate: true } }, project: { select: { id: true, name: true } }, phase: { select: { name: true } } },
+            orderBy: { date: "desc" },
+        });
+        // Get all invoiced time ranges (by project)
+        const invoices = await ctx.db.invoice.findMany({
+            where: { orgId: user.orgId, status: { not: "draft" } },
+            select: { projectId: true, date: true },
+        });
+        const invoicedProjectIds = new Set(invoices.map((i: any) => i.projectId));
+        // Group by project, sum hours and value
+        const projectMap: Record<string, { projectId: string; projectName: string; entries: any[]; totalHours: number; totalValue: number }> = {};
+        for (const e of entries as any[]) {
+            const pid = e.project?.id;
+            if (!pid) continue;
+            if (!projectMap[pid]) {
+                projectMap[pid] = { projectId: pid, projectName: e.project?.name || "", entries: [], totalHours: 0, totalValue: 0 };
+            }
+            const rate = e.user?.billRate || 150;
+            projectMap[pid].entries.push({ ...e, rate });
+            projectMap[pid].totalHours += e.hours;
+            projectMap[pid].totalValue += e.hours * rate;
+        }
+        return Object.values(projectMap);
+    }),
+
+    // ─── AR Aging ───
+    arAging: protectedProcedure.query(async ({ ctx }) => {
+        const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+        if (!user) return { current: [], bucket30: [], bucket60: [], bucket90: [], bucket90plus: [], totals: { current: 0, bucket30: 0, bucket60: 0, bucket90: 0, bucket90plus: 0 } };
+        const invoices = await ctx.db.invoice.findMany({
+            where: { orgId: user.orgId, status: { in: ["sent", "viewed", "overdue"] } },
+            include: { client: true, project: true, payments: true },
+            orderBy: { dueDate: "asc" },
+        });
+        const today = new Date();
+        const buckets = { current: [] as any[], bucket30: [] as any[], bucket60: [] as any[], bucket90: [] as any[], bucket90plus: [] as any[] };
+        const totals = { current: 0, bucket30: 0, bucket60: 0, bucket90: 0, bucket90plus: 0 };
+        for (const inv of invoices as any[]) {
+            const paid = (inv.payments || []).reduce((s: number, p: any) => s + p.amount, 0);
+            const balance = inv.amount - paid;
+            if (balance <= 0) continue;
+            const dueDate = new Date(inv.dueDate);
+            const daysOverdue = Math.floor((today.getTime() - dueDate.getTime()) / 86400000);
+            const item = { ...inv, balance, daysOverdue };
+            if (daysOverdue <= 0) { buckets.current.push(item); totals.current += balance; }
+            else if (daysOverdue <= 30) { buckets.bucket30.push(item); totals.bucket30 += balance; }
+            else if (daysOverdue <= 60) { buckets.bucket60.push(item); totals.bucket60 += balance; }
+            else if (daysOverdue <= 90) { buckets.bucket90.push(item); totals.bucket90 += balance; }
+            else { buckets.bucket90plus.push(item); totals.bucket90plus += balance; }
+        }
+        return { ...buckets, totals };
+    }),
+
+    // ─── Payments ───
+    listPayments: protectedProcedure.query(async ({ ctx }) => {
+        const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+        if (!user) return [];
+        return ctx.db.payment.findMany({
+            where: { orgId: user.orgId },
+            include: { invoice: { include: { client: true, project: true } } },
+            orderBy: { date: "desc" },
+        });
+    }),
+
+    recordPayment: protectedProcedure
+        .input(z.object({
+            invoiceId: z.string(),
+            amount: z.number(),
+            date: z.string(),
+            method: z.string().default("check"),
+            reference: z.string().default(""),
+            notes: z.string().default(""),
+        }))
+        .mutation(async ({ ctx, input }) => {
+            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+            if (!user) throw new Error("User not found");
+            const payment = await ctx.db.payment.create({
+                data: { ...input, orgId: user.orgId },
+                include: { invoice: { include: { client: true, project: true, payments: true } } },
+            });
+            // Auto-mark invoice as paid if fully paid
+            const totalPaid = (payment.invoice.payments as any[]).reduce((s: number, p: any) => s + p.amount, 0);
+            if (totalPaid >= payment.invoice.amount) {
+                await ctx.db.invoice.update({ where: { id: input.invoiceId }, data: { status: "paid" } });
+            }
+            return payment;
         }),
 
     // Generate invoice from unbilled time entries

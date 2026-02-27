@@ -35,7 +35,7 @@ const navItems = [
     { label: "Time", href: "/dashboard/time", icon: Clock },
     { label: "Budgets", href: "/dashboard/budgets", icon: DollarSign },
     { label: "Expenses", href: "/dashboard/expenses", icon: Receipt },
-    { label: "Invoices", href: "/dashboard/invoices", icon: FileText },
+    { label: "Money", href: "/dashboard/invoices", icon: FileText },
     { label: "Team", href: "/dashboard/team", icon: Users },
     { label: "Clients", href: "/dashboard/clients", icon: Building2 },
     { label: "Resources", href: "/dashboard/resources", icon: Waypoints },

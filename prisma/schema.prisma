@@ -47,6 +47,9 @@ model Organization {
   timeOffPolicies    TimeOffPolicy[]
   holidays           Holiday[]
   defaultRoles       DefaultRole[]
+  consultants        Consultant[]
+  consultantBills    ConsultantBill[]
+  payments           Payment[]
 }
 
 // ─── Time Off Policy ───
@@ -175,14 +178,15 @@ model Project {
 
   templateId String?
 
-  phases        Phase[]
-  timeEntries   TimeEntry[]
-  invoices      Invoice[]
-  notifications Notification[]
-  milestones    Milestone[]
-  expenses      Expense[]
-  allocations   Allocation[]
-  tasks         Task[]
+  phases          Phase[]
+  timeEntries     TimeEntry[]
+  invoices        Invoice[]
+  notifications   Notification[]
+  milestones      Milestone[]
+  expenses        Expense[]
+  allocations     Allocation[]
+  tasks           Task[]
+  consultantBills ConsultantBill[]
 }
 
 // ─── Phase ───
@@ -284,14 +288,15 @@ model TimesheetSubmission {
 // ─── Invoice ───
 
 model Invoice {
-  id         String @id @default(cuid())
-  number     String @unique
-  amount     Float  @default(0)
-  date       String
-  dueDate    String
-  status     String @default("draft") // draft | sent | viewed | paid | overdue
-  notes      String @default("") // freeform notes on the invoice
-  paymentUrl String @default("") // Stripe/PayPal link
+  id           String @id @default(cuid())
+  number       String @unique
+  amount       Float  @default(0)
+  date         String
+  dueDate      String
+  status       String @default("draft") // draft | sent | viewed | paid | overdue
+  notes        String @default("") // freeform notes on the invoice
+  paymentUrl   String @default("") // Stripe/PayPal link
+  paymentTerms String @default("net30") // net15 | net30 | net45 | net60 | custom
 
   clientId String
   client   Client @relation(fields: [clientId], references: [id])
@@ -303,6 +308,7 @@ model Invoice {
   org   Organization @relation(fields: [orgId], references: [id])
 
   lineItems InvoiceLineItem[]
+  payments  Payment[]
 }
 
 // ─── Invoice Template ───
@@ -334,6 +340,64 @@ model InvoiceLineItem {
 
   invoiceId String
   invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// ─── Payment ───
+
+model Payment {
+  id        String   @id @default(cuid())
+  amount    Float
+  date      String   // YYYY-MM-DD
+  method    String   @default("check") // check | ach | wire | credit_card | cash | other
+  reference String   @default("") // check number, transaction ID, etc.
+  notes     String   @default("")
+  createdAt DateTime @default(now())
+
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+}
+
+// ─── Consultant ───
+
+model Consultant {
+  id        String   @id @default(cuid())
+  name      String
+  company   String   @default("")
+  email     String   @default("")
+  phone     String   @default("")
+  specialty String   @default("")
+  markupPct Float    @default(0)
+  status    String   @default("active") // active | inactive
+  createdAt DateTime @default(now())
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  bills ConsultantBill[]
+}
+
+// ─── Consultant Bill ───
+
+model ConsultantBill {
+  id          String   @id @default(cuid())
+  amount      Float
+  date        String   // YYYY-MM-DD
+  description String   @default("")
+  invoiceRef  String   @default("") // consultant's own invoice number
+  status      String   @default("pending") // pending | approved | paid
+  createdAt   DateTime @default(now())
+
+  consultantId String
+  consultant   Consultant @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
 }
 
 // ─── Notification ───

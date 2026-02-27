@@ -8,6 +8,7 @@ import { expenseRouter } from "./routers/expense";
 import { allocationRouter } from "./routers/allocation";
 import { clientRouter } from "./routers/client";
 import { settingsRouter } from "./routers/settings";
+import { consultantRouter } from "./routers/consultant";
 
 export const appRouter = router({
     project: projectRouter,
@@ -19,6 +20,7 @@ export const appRouter = router({
     allocation: allocationRouter,
     clients: clientRouter,
     settings: settingsRouter,
+    consultant: consultantRouter,
 });
 
 export type AppRouter = typeof appRouter;
