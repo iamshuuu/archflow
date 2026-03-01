@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
     Plus,
     Search,
@@ -49,11 +50,20 @@ export default function ProjectsPage() {
     const [showTemplateManager, setShowTemplateManager] = useState(false);
     const [showFilter, setShowFilter] = useState(false);
     const [filterTypes, setFilterTypes] = useState<string[]>([]);
+    const [filterClient, setFilterClient] = useState("");
     const [activeRowMenu, setActiveRowMenu] = useState<string | null>(null);
+    const [section, setSection] = useState<"all" | "pipeline" | "by-client" | "templates" | "archive">("all");
 
     const utils = trpc.useUtils();
+    const router = useRouter();
     const { data: rawProjects = [], isLoading } = trpc.project.list.useQuery();
     const updateStage = trpc.project.updatePipelineStage.useMutation({
+        onSuccess: () => utils.project.list.invalidate(),
+    });
+    const updateProject = trpc.project.update.useMutation({
+        onSuccess: () => utils.project.list.invalidate(),
+    });
+    const deleteProject = trpc.project.delete.useMutation({
         onSuccess: () => utils.project.list.invalidate(),
     });
 
@@ -78,6 +88,7 @@ export default function ProjectsPage() {
     const filtered = projects.filter((p: any) => {
         if (statusFilter !== "all" && p.status !== statusFilter) return false;
         if (filterTypes.length > 0 && !filterTypes.includes(p.type)) return false;
+        if (filterClient && p.client !== filterClient) return false;
         if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.client.toLowerCase().includes(search.toLowerCase())) return false;
         return true;
     });
@@ -137,6 +148,15 @@ export default function ProjectsPage() {
                 ))}
             </div>
 
+            {/* 5-section sub-nav */}
+            <div style={{ display: "flex", gap: "0", marginBottom: "20px", borderBottom: "1px solid var(--border-primary)" }}>
+                {([{ key: "all", label: "All Projects" }, { key: "pipeline", label: "Pipeline" }, { key: "by-client", label: "By Client" }, { key: "templates", label: "Templates" }, { key: "archive", label: "Archive" }] as const).map(({ key, label }) => (
+                    <button key={key} onClick={() => setSection(key as any)} style={{ padding: "10px 18px", fontSize: "12px", fontWeight: 500, cursor: "pointer", border: "none", background: "none", color: section === key ? "var(--accent-primary)" : "var(--text-muted)", borderBottom: section === key ? "2px solid var(--accent-primary)" : "2px solid transparent", transition: "all 0.15s" }}>
+                        {label}
+                    </button>
+                ))}
+            </div>
+
             {/* Toolbar */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px", gap: "12px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1 }}>
@@ -167,22 +187,23 @@ export default function ProjectsPage() {
                         )}
                     </div>
                 </div>
-                <div style={{ display: "flex", gap: "2px", background: "var(--bg-secondary)", borderRadius: "6px", padding: "2px" }}>
-                    {[
-                        { mode: "list" as const, icon: List },
-                        { mode: "grid" as const, icon: LayoutGrid },
-                        { mode: "pipeline" as const, icon: Kanban },
-                    ].map(({ mode, icon: Icon }) => (
-                        <button key={mode} onClick={() => setViewMode(mode)}
-                            style={{ padding: "6px 8px", borderRadius: "4px", border: "none", cursor: "pointer", background: viewMode === mode ? "var(--bg-card)" : "transparent", color: viewMode === mode ? "var(--text-primary)" : "var(--text-muted)", boxShadow: viewMode === mode ? "var(--shadow-sm)" : "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <Icon size={15} />
-                        </button>
-                    ))}
-                </div>
+                {section === "all" && (
+                    <div style={{ display: "flex", gap: "2px", background: "var(--bg-secondary)", borderRadius: "6px", padding: "2px" }}>
+                        {[
+                            { mode: "list" as const, icon: List },
+                            { mode: "grid" as const, icon: LayoutGrid },
+                        ].map(({ mode, icon: Icon }) => (
+                            <button key={mode} onClick={() => setViewMode(mode)}
+                                style={{ padding: "6px 8px", borderRadius: "4px", border: "none", cursor: "pointer", background: viewMode === mode ? "var(--bg-card)" : "transparent", color: viewMode === mode ? "var(--text-primary)" : "var(--text-muted)", boxShadow: viewMode === mode ? "var(--shadow-sm)" : "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <Icon size={15} />
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* List view */}
-            {viewMode === "list" && (
+            {section === "all" && viewMode === "list" && (
                 <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
@@ -221,12 +242,18 @@ export default function ProjectsPage() {
                                             </button>
                                             {activeRowMenu === proj.id && (
                                                 <div style={{ position: "absolute", right: "14px", top: "42px", zIndex: 50, minWidth: "150px", background: "var(--bg-card)", borderRadius: "8px", border: "1px solid var(--border-secondary)", boxShadow: "0 8px 24px rgba(0,0,0,0.1)", padding: "4px" }}>
-                                                    {["View Details", "Edit Project", "Archive", "Delete"].map((action) => (
-                                                        <button key={action} onClick={(e) => { e.stopPropagation(); setActiveRowMenu(null); }}
-                                                            style={{ width: "100%", padding: "8px 12px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontSize: "12px", color: action === "Delete" ? "var(--danger)" : "var(--text-secondary)", borderRadius: "4px" }}
-                                                            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
-                                                            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>{action}</button>
-                                                    ))}
+                                                    <button onClick={(e) => { e.stopPropagation(); setActiveRowMenu(null); router.push(`/dashboard/projects/${proj.id}`); }}
+                                                        style={{ width: "100%", padding: "8px 12px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontSize: "12px", color: "var(--text-secondary)", borderRadius: "4px" }}
+                                                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
+                                                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>View Details</button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setActiveRowMenu(null); updateProject.mutate({ id: proj.id, status: "archived" }); }}
+                                                        style={{ width: "100%", padding: "8px 12px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontSize: "12px", color: "var(--text-secondary)", borderRadius: "4px" }}
+                                                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
+                                                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>Archive</button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setActiveRowMenu(null); if (confirm("Delete this project? This cannot be undone.")) deleteProject.mutate({ id: proj.id }); }}
+                                                        style={{ width: "100%", padding: "8px 12px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontSize: "12px", color: "var(--danger)", borderRadius: "4px" }}
+                                                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
+                                                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>Delete</button>
                                                 </div>
                                             )}
                                         </td>
@@ -240,7 +267,7 @@ export default function ProjectsPage() {
             )}
 
             {/* Grid view */}
-            {viewMode === "grid" && (
+            {section === "all" && viewMode === "grid" && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
                     {filtered.map((proj: any) => {
                         const sc = statusConfig[proj.status as ProjectStatus] || statusConfig.active;
@@ -283,7 +310,7 @@ export default function ProjectsPage() {
             )}
 
             {/* Pipeline / Kanban view */}
-            {viewMode === "pipeline" && (
+            {section === "pipeline" && (
                 <div style={{ display: "flex", gap: "14px", overflowX: "auto", paddingBottom: "16px" }}>
                     {pipelineStages.map(stage => {
                         const stageProjects = filtered.filter((p: any) => p.pipelineStage === stage.key);
@@ -337,6 +364,85 @@ export default function ProjectsPage() {
                     })}
                 </div>
             )}
+
+            {/* By Client view */}
+            {section === "by-client" && (() => {
+                const clientGroups: Record<string, any[]> = {};
+                filtered.forEach((p: any) => {
+                    if (!clientGroups[p.client]) clientGroups[p.client] = [];
+                    clientGroups[p.client].push(p);
+                });
+                return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                        {Object.entries(clientGroups).sort(([a], [b]) => a.localeCompare(b)).map(([client, projs]) => (
+                            <div key={client} style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                                <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--bg-warm)" }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <Users size={14} style={{ color: "var(--accent-primary)" }} />
+                                        <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{client}</span>
+                                    </div>
+                                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{projs.length} project{projs.length > 1 ? "s" : ""} · {formatCurrency(projs.reduce((s: number, p: any) => s + p.contractValue, 0))}</span>
+                                </div>
+                                {projs.map((proj: any) => {
+                                    const sc = statusConfig[proj.status as ProjectStatus] || statusConfig.active;
+                                    return (
+                                        <Link key={proj.id} href={`/dashboard/projects/${proj.id}`} style={{ textDecoration: "none", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--border-primary)" }}
+                                            onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
+                                            onMouseLeave={(e: any) => { e.currentTarget.style.background = "transparent"; }}>
+                                            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                                                <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{proj.name}</span>
+                                                <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "3px", background: "var(--bg-secondary)", color: "var(--text-muted)" }}>{proj.type}</span>
+                                            </div>
+                                            <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                                                <span style={{ fontSize: "12px", color: "var(--text-secondary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(proj.contractValue)}</span>
+                                                <span style={{ fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", textTransform: "uppercase", color: sc.color, background: sc.bg }}>{sc.label}</span>
+                                            </div>
+                                        </Link>
+                                    );
+                                })}
+                            </div>
+                        ))}
+                        {Object.keys(clientGroups).length === 0 && <div style={{ padding: "48px", textAlign: "center" }}><p style={{ fontSize: "14px", color: "var(--text-muted)", fontWeight: 300 }}>No projects match your filters.</p></div>}
+                    </div>
+                );
+            })()}
+
+            {/* Templates inline view */}
+            {section === "templates" && <TemplateManagerModal onClose={() => setSection("all")} />}
+
+            {/* Archive view */}
+            {section === "archive" && (() => {
+                const archived = projects.filter((p: any) => p.status === "archived" || p.status === "completed");
+                return (
+                    <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                            <thead><tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                                {["Project", "Client", "Type", "Status", "Contract", ""].map(h => <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>
+                                {archived.map((proj: any) => {
+                                    const sc = statusConfig[proj.status as ProjectStatus] || statusConfig.active;
+                                    return (
+                                        <tr key={proj.id} style={{ borderBottom: "1px solid var(--border-primary)" }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                                            <td style={{ padding: "14px" }}><Link href={`/dashboard/projects/${proj.id}`} style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)", textDecoration: "none" }}>{proj.name}</Link></td>
+                                            <td style={{ padding: "14px", fontSize: "12px", color: "var(--text-tertiary)", fontWeight: 300 }}>{proj.client}</td>
+                                            <td style={{ padding: "14px" }}><span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "3px", background: "var(--bg-secondary)", color: "var(--text-muted)" }}>{proj.type}</span></td>
+                                            <td style={{ padding: "14px" }}><span style={{ fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", textTransform: "uppercase", color: sc.color, background: sc.bg }}>{sc.label}</span></td>
+                                            <td style={{ padding: "14px", fontSize: "12px", color: "var(--text-secondary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(proj.contractValue)}</td>
+                                            <td style={{ padding: "14px" }}>
+                                                <button onClick={() => updateProject.mutate({ id: proj.id, status: "active" })} style={{ padding: "4px 10px", borderRadius: "4px", border: "1px solid var(--border-secondary)", background: "transparent", cursor: "pointer", fontSize: "10px", color: "var(--text-muted)" }}>Reactivate</button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                        {archived.length === 0 && <div style={{ padding: "48px", textAlign: "center" }}><p style={{ fontSize: "14px", color: "var(--text-muted)", fontWeight: 300 }}>No archived or completed projects.</p></div>}
+                    </div>
+                );
+            })()}
 
             {/* Modals */}
             {showNewProject && <NewProjectModal onClose={() => setShowNewProject(false)} />}

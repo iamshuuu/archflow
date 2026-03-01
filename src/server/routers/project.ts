@@ -90,6 +90,11 @@ export const projectRouter = router({
             id: z.string(),
             name: z.string().optional(),
             status: z.string().optional(),
+            type: z.string().optional(),
+            contractValue: z.number().optional(),
+            startDate: z.string().optional(),
+            endDate: z.string().optional(),
+            pipelineStage: z.string().optional(),
             phase: z.string().optional(),
             progress: z.number().optional(),
         }))
@@ -279,5 +284,237 @@ export const projectRouter = router({
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
             return ctx.db.task.delete({ where: { id: input.id } });
+        }),
+
+    // ─── Phase CRUD ───
+    addPhase: protectedProcedure
+        .input(z.object({
+            projectId: z.string(),
+            name: z.string().min(1),
+            budgetHours: z.number().default(0),
+            budgetAmount: z.number().default(0),
+            feeType: z.string().default("hourly"),
+            startDate: z.string().default(""),
+            endDate: z.string().default(""),
+        }))
+        .mutation(async ({ ctx, input }) => {
+            return ctx.db.phase.create({ data: input });
+        }),
+
+    deletePhase: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            return ctx.db.phase.delete({ where: { id: input.id } });
+        }),
+
+    // ─── Performance Analytics ───
+    performance: protectedProcedure
+        .input(z.object({ projectId: z.string() }))
+        .query(async ({ ctx, input }) => {
+            const project = await ctx.db.project.findUnique({
+                where: { id: input.projectId },
+                include: {
+                    phases: {
+                        include: {
+                            timeEntries: { select: { hours: true } },
+                        },
+                    },
+                },
+            });
+            if (!project) return null;
+
+            const phases = project.phases.map((ph) => {
+                const usedHours = ph.timeEntries.reduce((s, te) => s + te.hours, 0);
+                const burnPct = ph.budgetHours > 0 ? Math.round((usedHours / ph.budgetHours) * 100) : 0;
+                const remaining = Math.max(0, ph.budgetHours - usedHours);
+                return {
+                    id: ph.id,
+                    name: ph.name,
+                    budgetHours: ph.budgetHours,
+                    usedHours,
+                    remaining,
+                    burnPct,
+                    budgetAmount: ph.budgetAmount,
+                    feeType: ph.feeType,
+                    startDate: ph.startDate,
+                    endDate: ph.endDate,
+                };
+            });
+
+            const totalBudget = phases.reduce((s, p) => s + p.budgetHours, 0);
+            const totalUsed = phases.reduce((s, p) => s + p.usedHours, 0);
+            const totalRemaining = phases.reduce((s, p) => s + p.remaining, 0);
+            const overallBurn = totalBudget > 0 ? Math.round((totalUsed / totalBudget) * 100) : 0;
+
+            // Schedule variance — days elapsed vs planned
+            let scheduleVariance = 0;
+            if (project.startDate && project.endDate) {
+                const start = new Date(project.startDate).getTime();
+                const end = new Date(project.endDate).getTime();
+                const now = Date.now();
+                const totalDuration = end - start;
+                const elapsed = now - start;
+                if (totalDuration > 0) {
+                    const expectedPct = Math.min(100, Math.round((elapsed / totalDuration) * 100));
+                    scheduleVariance = overallBurn - expectedPct; // positive = ahead, negative = behind
+                }
+            }
+
+            return { phases, totalBudget, totalUsed, totalRemaining, overallBurn, scheduleVariance };
+        }),
+
+    // ─── Profit Analytics ───
+    profit: protectedProcedure
+        .input(z.object({ projectId: z.string() }))
+        .query(async ({ ctx, input }) => {
+            const project = await ctx.db.project.findUnique({
+                where: { id: input.projectId },
+                include: {
+                    invoices: { select: { amount: true, status: true } },
+                    phases: {
+                        include: {
+                            timeEntries: {
+                                include: { user: { select: { costRate: true, billRate: true } } },
+                            },
+                        },
+                    },
+                    expenses: { select: { amount: true } },
+                },
+            });
+            if (!project) return null;
+
+            const revenue = project.invoices
+                .filter((inv) => inv.status === "paid" || inv.status === "sent" || inv.status === "viewed")
+                .reduce((s, inv) => s + inv.amount, 0);
+
+            let laborCost = 0;
+            let billableValue = 0;
+            project.phases.forEach((ph) => {
+                ph.timeEntries.forEach((te) => {
+                    laborCost += te.hours * (te.user?.costRate || 0);
+                    billableValue += te.hours * (te.user?.billRate || 0);
+                });
+            });
+
+            const expenseCost = project.expenses.reduce((s, e) => s + e.amount, 0);
+            const totalCost = laborCost + expenseCost;
+            const grossProfit = revenue - totalCost;
+            const margin = revenue > 0 ? Math.round((grossProfit / revenue) * 100) : 0;
+            const multiplier = laborCost > 0 ? Math.round((revenue / laborCost) * 100) / 100 : 0;
+
+            return {
+                contractValue: project.contractValue,
+                revenue,
+                laborCost,
+                expenseCost,
+                totalCost,
+                grossProfit,
+                margin,
+                multiplier,
+                billableValue,
+            };
+        }),
+
+    // ─── Project Files ───
+    listFiles: protectedProcedure
+        .input(z.object({ projectId: z.string() }))
+        .query(async ({ ctx, input }) => {
+            return ctx.db.projectFile.findMany({
+                where: { projectId: input.projectId },
+                include: {
+                    uploadedBy: { select: { id: true, name: true } },
+                    phase: { select: { id: true, name: true } },
+                },
+                orderBy: { createdAt: "desc" },
+            });
+        }),
+
+    addFile: protectedProcedure
+        .input(z.object({
+            projectId: z.string(),
+            name: z.string().min(1),
+            url: z.string().default(""),
+            fileType: z.string().default("other"),
+            size: z.number().default(0),
+            phaseId: z.string().optional(),
+        }))
+        .mutation(async ({ ctx, input }) => {
+            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+            if (!user) throw new Error("User not found");
+            return ctx.db.projectFile.create({
+                data: { ...input, uploadedById: user.id, orgId: user.orgId },
+                include: {
+                    uploadedBy: { select: { id: true, name: true } },
+                    phase: { select: { id: true, name: true } },
+                },
+            });
+        }),
+
+    deleteFile: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            return ctx.db.projectFile.delete({ where: { id: input.id } });
+        }),
+
+    // ─── Deliverables ───
+    listDeliverables: protectedProcedure
+        .input(z.object({ projectId: z.string() }))
+        .query(async ({ ctx, input }) => {
+            return ctx.db.deliverable.findMany({
+                where: { projectId: input.projectId },
+                include: {
+                    assignee: { select: { id: true, name: true } },
+                    phase: { select: { id: true, name: true } },
+                },
+                orderBy: [{ phaseId: "asc" }, { sortOrder: "asc" }],
+            });
+        }),
+
+    createDeliverable: protectedProcedure
+        .input(z.object({
+            projectId: z.string(),
+            phaseId: z.string(),
+            title: z.string().min(1),
+            description: z.string().default(""),
+            dueDate: z.string().default(""),
+            assigneeId: z.string().optional(),
+        }))
+        .mutation(async ({ ctx, input }) => {
+            const count = await ctx.db.deliverable.count({ where: { projectId: input.projectId } });
+            return ctx.db.deliverable.create({
+                data: { ...input, sortOrder: count },
+                include: {
+                    assignee: { select: { id: true, name: true } },
+                    phase: { select: { id: true, name: true } },
+                },
+            });
+        }),
+
+    updateDeliverable: protectedProcedure
+        .input(z.object({
+            id: z.string(),
+            title: z.string().optional(),
+            description: z.string().optional(),
+            status: z.string().optional(),
+            dueDate: z.string().optional(),
+            completedDate: z.string().optional(),
+            assigneeId: z.string().nullable().optional(),
+        }))
+        .mutation(async ({ ctx, input }) => {
+            const { id, ...data } = input;
+            return ctx.db.deliverable.update({
+                where: { id },
+                data,
+                include: {
+                    assignee: { select: { id: true, name: true } },
+                    phase: { select: { id: true, name: true } },
+                },
+            });
+        }),
+
+    deleteDeliverable: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            return ctx.db.deliverable.delete({ where: { id: input.id } });
         }),
 });

@@ -25,6 +25,10 @@ import {
     CircleDot,
     CircleCheck,
     Eye,
+    BarChart3,
+    Package,
+    Paperclip,
+    X,
 } from "lucide-react";
 import GanttChart from "@/app/components/GanttChart";
 
@@ -71,8 +75,16 @@ export default function ProjectDetailPage() {
     const { data: rawProject, isLoading } = trpc.project.getById.useQuery({ id: projectId }, { enabled: !!projectId });
 
     const [activePhase, setActivePhase] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<"overview" | "gantt" | "expenses" | "tasks">("overview");
+    const [activeTab, setActiveTab] = useState<"overview" | "gantt" | "budget" | "tasks" | "deliverables" | "files" | "expenses">("overview");
     const [showNewTask, setShowNewTask] = useState(false);
+    const [showEditProject, setShowEditProject] = useState(false);
+    const [showAddPhase, setShowAddPhase] = useState(false);
+    const [showAddFile, setShowAddFile] = useState(false);
+    const [showAddDeliverable, setShowAddDeliverable] = useState(false);
+    const [newPhase, setNewPhase] = useState({ name: "", budgetHours: "", budgetAmount: "", feeType: "hourly", startDate: "", endDate: "" });
+    const [newFile, setNewFile] = useState({ name: "", url: "", fileType: "other", phaseId: "" });
+    const [newDeliverable, setNewDeliverable] = useState({ title: "", description: "", dueDate: "", phaseId: "", assigneeId: "" });
+    const [editForm, setEditForm] = useState({ name: "", type: "", contractValue: "", startDate: "", endDate: "", status: "" });
     const [newTask, setNewTask] = useState({ title: "", phaseId: "", assigneeId: "", dueDate: "" });
 
     const utils = trpc.useUtils();
@@ -84,20 +96,24 @@ export default function ProjectDetailPage() {
     );
 
     // Fetch tasks
-    const { data: tasks = [] } = trpc.project.listTasks.useQuery(
-        { projectId },
-        { enabled: !!projectId }
-    );
+    const { data: tasks = [] } = trpc.project.listTasks.useQuery({ projectId }, { enabled: !!projectId });
     const { data: teamMembers = [] } = trpc.team.list.useQuery();
-    const createTask = trpc.project.createTask.useMutation({
-        onSuccess: () => { utils.project.listTasks.invalidate(); setNewTask({ title: "", phaseId: "", assigneeId: "", dueDate: "" }); setShowNewTask(false); },
-    });
-    const updateTask = trpc.project.updateTask.useMutation({
-        onSuccess: () => utils.project.listTasks.invalidate(),
-    });
-    const deleteTask = trpc.project.deleteTask.useMutation({
-        onSuccess: () => utils.project.listTasks.invalidate(),
-    });
+    const { data: perfData } = trpc.project.performance.useQuery({ projectId }, { enabled: !!projectId });
+    const { data: profitData } = trpc.project.profit.useQuery({ projectId }, { enabled: !!projectId });
+    const { data: files = [] } = trpc.project.listFiles.useQuery({ projectId }, { enabled: !!projectId });
+    const { data: deliverables = [] } = trpc.project.listDeliverables.useQuery({ projectId }, { enabled: !!projectId });
+
+    const createTask = trpc.project.createTask.useMutation({ onSuccess: () => { utils.project.listTasks.invalidate(); setNewTask({ title: "", phaseId: "", assigneeId: "", dueDate: "" }); setShowNewTask(false); } });
+    const updateTask = trpc.project.updateTask.useMutation({ onSuccess: () => utils.project.listTasks.invalidate() });
+    const deleteTask = trpc.project.deleteTask.useMutation({ onSuccess: () => utils.project.listTasks.invalidate() });
+    const addPhaseMut = trpc.project.addPhase.useMutation({ onSuccess: () => { utils.project.getById.invalidate(); setNewPhase({ name: "", budgetHours: "", budgetAmount: "", feeType: "hourly", startDate: "", endDate: "" }); setShowAddPhase(false); } });
+    const deletePhaseMut = trpc.project.deletePhase.useMutation({ onSuccess: () => utils.project.getById.invalidate() });
+    const updateProject = trpc.project.update.useMutation({ onSuccess: () => { utils.project.getById.invalidate(); setShowEditProject(false); } });
+    const addFileMut = trpc.project.addFile.useMutation({ onSuccess: () => { utils.project.listFiles.invalidate(); setNewFile({ name: "", url: "", fileType: "other", phaseId: "" }); setShowAddFile(false); } });
+    const deleteFileMut = trpc.project.deleteFile.useMutation({ onSuccess: () => utils.project.listFiles.invalidate() });
+    const createDeliverableMut = trpc.project.createDeliverable.useMutation({ onSuccess: () => { utils.project.listDeliverables.invalidate(); setNewDeliverable({ title: "", description: "", dueDate: "", phaseId: "", assigneeId: "" }); setShowAddDeliverable(false); } });
+    const updateDeliverableMut = trpc.project.updateDeliverable.useMutation({ onSuccess: () => utils.project.listDeliverables.invalidate() });
+    const deleteDeliverableMut = trpc.project.deleteDeliverable.useMutation({ onSuccess: () => utils.project.listDeliverables.invalidate() });
 
     const taskStatusCycle = ["todo", "in-progress", "review", "done"];
     const taskStatusConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
@@ -190,7 +206,7 @@ export default function ProjectDetailPage() {
                         </p>
                     </div>
                     <div style={{ display: "flex", gap: "8px" }}>
-                        <button style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-secondary)" }}>
+                        <button onClick={() => { setEditForm({ name: project.name, type: project.type, contractValue: String(project.contractValue), startDate: project.startDate === "—" ? "" : project.startDate, endDate: project.endDate === "—" ? "" : project.endDate, status: project.status }); setShowEditProject(true); }} style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-secondary)" }}>
                             <Edit3 size={13} /> Edit
                         </button>
                         <button style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "white", fontWeight: 500 }}>
@@ -218,26 +234,22 @@ export default function ProjectDetailPage() {
                 ))}
             </div>
 
-            {/* Tab bar */}
             <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "1px solid var(--border-primary)" }}>
-                {(["overview", "gantt", "expenses", "tasks"] as const).map((tab) => (
-                    <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        style={{
-                            padding: "10px 20px", fontSize: "12px", fontWeight: 500, cursor: "pointer",
+                {(["overview", "gantt", "budget", "tasks", "deliverables", "files", "expenses"] as const).map((tab) => {
+                    const icons: Record<string, React.ReactNode> = { gantt: <CalendarRange size={13} />, budget: <BarChart3 size={13} />, tasks: <ListTodo size={13} />, deliverables: <Package size={13} />, files: <Paperclip size={13} />, expenses: <Receipt size={13} /> };
+                    return (
+                        <button key={tab} onClick={() => setActiveTab(tab)} style={{
+                            padding: "10px 16px", fontSize: "12px", fontWeight: 500, cursor: "pointer",
                             border: "none", background: "none",
                             color: activeTab === tab ? "var(--accent-primary)" : "var(--text-muted)",
                             borderBottom: activeTab === tab ? "2px solid var(--accent-primary)" : "2px solid transparent",
-                            transition: "all 0.15s",
-                            display: "flex", alignItems: "center", gap: "6px",
-                        }}
-                    >
-                        {tab === "gantt" && <CalendarRange size={13} />}
-                        {tab === "expenses" && <Receipt size={13} />}
-                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                    </button>
-                ))}
+                            transition: "all 0.15s", display: "flex", alignItems: "center", gap: "6px",
+                        }}>
+                            {icons[tab] || null}
+                            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                        </button>
+                    );
+                })}
             </div>
 
             {/* Overview tab */}
@@ -247,7 +259,7 @@ export default function ProjectDetailPage() {
                     <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
                             <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Phases & Milestones</h3>
-                            <button style={{ padding: "6px 12px", borderRadius: "4px", border: "1px solid var(--border-primary)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
+                            <button onClick={() => setShowAddPhase(true)} style={{ padding: "6px 12px", borderRadius: "4px", border: "1px solid var(--border-primary)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
                                 <Plus size={12} /> Add Phase
                             </button>
                         </div>
@@ -550,6 +562,232 @@ export default function ProjectDetailPage() {
                             </tbody>
                         </table>
                     )}
+                </div>
+            )}
+            {/* Budget tab */}
+            {activeTab === "budget" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "16px" }}>
+                    <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                        <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "20px" }}>Phase Budget Breakdown</h3>
+                        {perfData?.phases.map((ph: any) => (
+                            <div key={ph.id} style={{ marginBottom: "16px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                                    <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{ph.name}</span>
+                                    <span style={{ fontSize: "11px", color: ph.burnPct > 100 ? "var(--danger)" : ph.burnPct > 80 ? "var(--warning)" : "var(--text-muted)", fontWeight: 500 }}>{ph.burnPct}% burned</span>
+                                </div>
+                                <div style={{ height: "6px", borderRadius: "3px", background: "var(--bg-tertiary)", marginBottom: "6px" }}>
+                                    <div style={{ height: "100%", borderRadius: "3px", width: `${Math.min(ph.burnPct, 100)}%`, background: ph.burnPct > 100 ? "var(--danger)" : ph.burnPct > 80 ? "var(--warning)" : "var(--accent-primary)", transition: "width 0.3s" }} />
+                                </div>
+                                <div style={{ display: "flex", gap: "16px", fontSize: "11px", color: "var(--text-muted)" }}>
+                                    <span>Budget: {ph.budgetHours}h</span>
+                                    <span>Used: {ph.usedHours.toFixed(1)}h</span>
+                                    <span>Remaining: {ph.remaining.toFixed(1)}h</span>
+                                    {ph.budgetAmount > 0 && <span>${ph.budgetAmount.toLocaleString()}</span>}
+                                </div>
+                            </div>
+                        ))}
+                        {(!perfData || perfData.phases.length === 0) && <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300, textAlign: "center", padding: "20px" }}>No phases to show.</p>}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                        <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Summary</h3>
+                            {[{ label: "Total Budget", value: `${perfData?.totalBudget || 0}h` }, { label: "Hours Used", value: `${perfData?.totalUsed?.toFixed(1) || 0}h` }, { label: "Overall Burn", value: `${perfData?.overallBurn || 0}%` }, { label: "Schedule Variance", value: `${(perfData?.scheduleVariance || 0) > 0 ? "+" : ""}${perfData?.scheduleVariance || 0}%` }].map((r, i) => (
+                                <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
+                                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{r.label}</span>
+                                    <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{r.value}</span>
+                                </div>
+                            ))}
+                        </div>
+                        {profitData && (
+                            <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                                <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Profitability</h3>
+                                {[{ label: "Revenue", value: `$${profitData.revenue.toLocaleString()}` }, { label: "Labor Cost", value: `$${profitData.laborCost.toLocaleString()}` }, { label: "Expenses", value: `$${profitData.expenseCost.toLocaleString()}` }, { label: "Gross Profit", value: `$${profitData.grossProfit.toLocaleString()}` }, { label: "Margin", value: `${profitData.margin}%` }, { label: "Multiplier", value: `${profitData.multiplier}x` }].map((r, i) => (
+                                    <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
+                                        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{r.label}</span>
+                                        <span style={{ fontSize: "12px", fontWeight: 500, color: r.label === "Gross Profit" ? (profitData.grossProfit >= 0 ? "var(--success)" : "var(--danger)") : "var(--text-primary)" }}>{r.value}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Deliverables tab */}
+            {activeTab === "deliverables" && (
+                <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                    <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Deliverables</h3>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>{(deliverables as any[]).length} deliverables · {(deliverables as any[]).filter((d: any) => d.status === "completed" || d.status === "approved").length} completed</p>
+                        </div>
+                        <button onClick={() => setShowAddDeliverable(!showAddDeliverable)} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer" }}><Plus size={13} /> Add</button>
+                    </div>
+                    {showAddDeliverable && (
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                                <div style={{ flex: 2, minWidth: "160px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Title *</label>
+                                    <input type="text" value={newDeliverable.title} onChange={(e) => setNewDeliverable(p => ({ ...p, title: e.target.value }))} placeholder="Deliverable title" style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                </div>
+                                <div style={{ flex: 1, minWidth: "120px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Phase *</label>
+                                    <select value={newDeliverable.phaseId} onChange={(e) => setNewDeliverable(p => ({ ...p, phaseId: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                        <option value="">Select phase...</option>
+                                        {project.phases.map((ph: any) => <option key={ph.id} value={ph.id}>{ph.name}</option>)}
+                                    </select>
+                                </div>
+                                <div style={{ flex: 1, minWidth: "120px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Due Date</label>
+                                    <input type="date" value={newDeliverable.dueDate} onChange={(e) => setNewDeliverable(p => ({ ...p, dueDate: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                </div>
+                                <button onClick={() => { if (!newDeliverable.title || !newDeliverable.phaseId) return; createDeliverableMut.mutate({ projectId, phaseId: newDeliverable.phaseId, title: newDeliverable.title, description: newDeliverable.description, dueDate: newDeliverable.dueDate, assigneeId: newDeliverable.assigneeId || undefined }); }}
+                                    disabled={!newDeliverable.title || !newDeliverable.phaseId} style={{ padding: "8px 16px", borderRadius: "5px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !newDeliverable.title || !newDeliverable.phaseId ? 0.5 : 1, whiteSpace: "nowrap" }}>Add</button>
+                            </div>
+                        </div>
+                    )}
+                    {(deliverables as any[]).length === 0 ? (
+                        <div style={{ padding: "40px", textAlign: "center" }}><Package size={24} style={{ color: "var(--text-muted)", marginBottom: "8px" }} /><p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No deliverables yet.</p></div>
+                    ) : (
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                            <thead><tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                                {["Status", "Deliverable", "Phase", "Assignee", "Due Date", ""].map(h => <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>
+                                {(deliverables as any[]).map((d: any) => {
+                                    const dsc: Record<string, { label: string; color: string; bg: string }> = { pending: { label: "Pending", color: "var(--text-muted)", bg: "var(--bg-secondary)" }, "in-progress": { label: "In Progress", color: "var(--info)", bg: "rgba(90,122,144,0.08)" }, completed: { label: "Completed", color: "var(--success)", bg: "rgba(90,122,70,0.08)" }, approved: { label: "Approved", color: "var(--accent-primary)", bg: "rgba(176,122,74,0.08)" } };
+                                    const ds = dsc[d.status] || dsc.pending;
+                                    const statusCycle = ["pending", "in-progress", "completed", "approved"];
+                                    return (
+                                        <tr key={d.id} style={{ borderBottom: "1px solid var(--border-primary)" }} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                                            <td style={{ padding: "10px 14px" }}>
+                                                <button onClick={() => { const idx = statusCycle.indexOf(d.status); const next = statusCycle[(idx + 1) % statusCycle.length]; updateDeliverableMut.mutate({ id: d.id, status: next, completedDate: next === "completed" || next === "approved" ? new Date().toISOString().slice(0, 10) : "" }); }}
+                                                    style={{ border: "none", cursor: "pointer", color: ds.color, display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", background: ds.bg }}>{ds.label}</button>
+                                            </td>
+                                            <td style={{ padding: "10px 14px", fontSize: "12px", fontWeight: 500, color: d.status === "approved" ? "var(--text-muted)" : "var(--text-primary)", textDecoration: d.status === "approved" ? "line-through" : "none" }}>{d.title}</td>
+                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{d.phase?.name || "—"}</td>
+                                            <td style={{ padding: "10px 14px" }}>{d.assignee ? <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "10px", background: "rgba(176,122,74,0.08)", color: "var(--accent-primary)", fontWeight: 500 }}>{d.assignee.name}</span> : <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>—</span>}</td>
+                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{d.dueDate || "—"}</td>
+                                            <td style={{ padding: "10px 14px" }}><button onClick={() => deleteDeliverableMut.mutate({ id: d.id })} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }} onMouseEnter={(e) => { e.currentTarget.style.color = "var(--danger)"; }} onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}><Trash2 size={13} /></button></td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+
+            {/* Files tab */}
+            {activeTab === "files" && (
+                <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                    <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Project Files</h3>
+                        <button onClick={() => setShowAddFile(!showAddFile)} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer" }}><Plus size={13} /> Add File</button>
+                    </div>
+                    {showAddFile && (
+                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                                <div style={{ flex: 2, minWidth: "160px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>File Name *</label>
+                                    <input type="text" value={newFile.name} onChange={(e) => setNewFile(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Floor Plan v3" style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                </div>
+                                <div style={{ flex: 2, minWidth: "160px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>URL</label>
+                                    <input type="text" value={newFile.url} onChange={(e) => setNewFile(p => ({ ...p, url: e.target.value }))} placeholder="https://..." style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                </div>
+                                <div style={{ flex: 1, minWidth: "100px" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Type</label>
+                                    <select value={newFile.fileType} onChange={(e) => setNewFile(p => ({ ...p, fileType: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                        {["drawing", "contract", "spec", "photo", "report", "other"].map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+                                    </select>
+                                </div>
+                                <button onClick={() => { if (!newFile.name) return; addFileMut.mutate({ projectId, name: newFile.name, url: newFile.url, fileType: newFile.fileType, phaseId: newFile.phaseId || undefined }); }}
+                                    disabled={!newFile.name} style={{ padding: "8px 16px", borderRadius: "5px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !newFile.name ? 0.5 : 1, whiteSpace: "nowrap" }}>Add</button>
+                            </div>
+                        </div>
+                    )}
+                    {(files as any[]).length === 0 ? (
+                        <div style={{ padding: "40px", textAlign: "center" }}><Paperclip size={24} style={{ color: "var(--text-muted)", marginBottom: "8px" }} /><p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No files attached yet.</p></div>
+                    ) : (
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                            <thead><tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                                {["Name", "Type", "Phase", "Uploaded By", "Date", ""].map(h => <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>
+                                {(files as any[]).map((f: any) => (
+                                    <tr key={f.id} style={{ borderBottom: "1px solid var(--border-primary)" }} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                                        <td style={{ padding: "10px 14px" }}>{f.url ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: "12px", fontWeight: 500, color: "var(--accent-primary)", textDecoration: "none" }}>{f.name}</a> : <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{f.name}</span>}</td>
+                                        <td style={{ padding: "10px 14px" }}><span style={{ fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", textTransform: "uppercase", color: "var(--text-muted)", background: "var(--bg-secondary)" }}>{f.fileType}</span></td>
+                                        <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{f.phase?.name || "—"}</td>
+                                        <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{f.uploadedBy?.name || "—"}</td>
+                                        <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{new Date(f.createdAt).toLocaleDateString()}</td>
+                                        <td style={{ padding: "10px 14px" }}><button onClick={() => deleteFileMut.mutate({ id: f.id })} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }} onMouseEnter={(e) => { e.currentTarget.style.color = "var(--danger)"; }} onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}><Trash2 size={13} /></button></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+
+            {/* Add Phase modal */}
+            {showAddPhase && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowAddPhase(false)}>
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(4px)" }} />
+                    <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: "480px", background: "var(--bg-card)", borderRadius: "12px", border: "1px solid var(--border-secondary)", boxShadow: "0 20px 60px rgba(0,0,0,0.12)", padding: "24px" }}>
+                        <h2 style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Add Phase</h2>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                            <input type="text" value={newPhase.name} onChange={(e) => setNewPhase(p => ({ ...p, name: e.target.value }))} placeholder="Phase name *" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+                                <input type="number" value={newPhase.budgetHours} onChange={(e) => setNewPhase(p => ({ ...p, budgetHours: e.target.value }))} placeholder="Budget hours" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                <input type="number" value={newPhase.budgetAmount} onChange={(e) => setNewPhase(p => ({ ...p, budgetAmount: e.target.value }))} placeholder="Budget $" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                <select value={newPhase.feeType} onChange={(e) => setNewPhase(p => ({ ...p, feeType: e.target.value }))} style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                    <option value="hourly">Hourly</option><option value="fixed">Fixed</option><option value="not-to-exceed">NTE</option>
+                                </select>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                                <input type="date" value={newPhase.startDate} onChange={(e) => setNewPhase(p => ({ ...p, startDate: e.target.value }))} style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                <input type="date" value={newPhase.endDate} onChange={(e) => setNewPhase(p => ({ ...p, endDate: e.target.value }))} style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                            </div>
+                            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                                <button onClick={() => setShowAddPhase(false)} style={{ padding: "10px 20px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>Cancel</button>
+                                <button onClick={() => { if (!newPhase.name) return; addPhaseMut.mutate({ projectId, name: newPhase.name, budgetHours: parseFloat(newPhase.budgetHours) || 0, budgetAmount: parseFloat(newPhase.budgetAmount) || 0, feeType: newPhase.feeType, startDate: newPhase.startDate, endDate: newPhase.endDate }); }}
+                                    disabled={!newPhase.name || addPhaseMut.isPending} style={{ padding: "10px 20px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "13px", fontWeight: 500, cursor: "pointer", opacity: !newPhase.name ? 0.5 : 1 }}>{addPhaseMut.isPending ? "Adding..." : "Add Phase"}</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Project modal */}
+            {showEditProject && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowEditProject(false)}>
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(4px)" }} />
+                    <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: "480px", background: "var(--bg-card)", borderRadius: "12px", border: "1px solid var(--border-secondary)", boxShadow: "0 20px 60px rgba(0,0,0,0.12)", padding: "24px" }}>
+                        <h2 style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Edit Project</h2>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                            <input type="text" value={editForm.name} onChange={(e) => setEditForm(p => ({ ...p, name: e.target.value }))} placeholder="Project name" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                                <select value={editForm.type} onChange={(e) => setEditForm(p => ({ ...p, type: e.target.value }))} style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                    {["Commercial", "Residential", "Civic", "Healthcare", "Education", "Industrial", "Mixed-Use", "Interior"].map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                                <select value={editForm.status} onChange={(e) => setEditForm(p => ({ ...p, status: e.target.value }))} style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                    {["active", "pipeline", "on-hold", "completed", "archived"].map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1).replace("-", " ")}</option>)}
+                                </select>
+                            </div>
+                            <input type="text" value={editForm.contractValue} onChange={(e) => setEditForm(p => ({ ...p, contractValue: e.target.value }))} placeholder="Contract value" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                                <input type="date" value={editForm.startDate} onChange={(e) => setEditForm(p => ({ ...p, startDate: e.target.value }))} style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                <input type="date" value={editForm.endDate} onChange={(e) => setEditForm(p => ({ ...p, endDate: e.target.value }))} style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                            </div>
+                            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                                <button onClick={() => setShowEditProject(false)} style={{ padding: "10px 20px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>Cancel</button>
+                                <button onClick={() => updateProject.mutate({ id: projectId, name: editForm.name, type: editForm.type, status: editForm.status, contractValue: parseFloat(editForm.contractValue.replace(/[^0-9.]/g, "")) || 0, startDate: editForm.startDate, endDate: editForm.endDate })}
+                                    disabled={updateProject.isPending} style={{ padding: "10px 20px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "13px", fontWeight: 500, cursor: "pointer" }}>{updateProject.isPending ? "Saving..." : "Save Changes"}</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
