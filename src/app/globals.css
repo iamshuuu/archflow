@@ -45,6 +45,43 @@
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.03);
 }
 
+/* ─── Dark Mode ─── */
+:root[data-theme="dark"] {
+  --bg-primary: #141210;
+  --bg-secondary: #1c1a16;
+  --bg-tertiary: #252320;
+  --bg-card: #1a1816;
+  --bg-card-hover: #222018;
+  --bg-elevated: #222018;
+  --bg-warm: #1e1c18;
+
+  --text-primary: #ede9e3;
+  --text-secondary: #b8b0a6;
+  --text-tertiary: #8a8278;
+  --text-muted: #635c54;
+
+  --accent-primary: #d4a06a;
+  --accent-primary-hover: #e0b07a;
+  --accent-secondary: #8a9a6a;
+  --accent-tertiary: #c8a050;
+  --accent-gold: #c8a050;
+
+  --success: #7a9a5a;
+  --warning: #c89a40;
+  --danger: #d06050;
+  --info: #6a9ab0;
+
+  --border-primary: rgba(255, 255, 255, 0.06);
+  --border-secondary: rgba(255, 255, 255, 0.10);
+  --border-accent: rgba(212, 160, 106, 0.25);
+  --border-warm: rgba(212, 160, 106, 0.14);
+
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.50);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
 @theme inline {
   --color-background: var(--bg-primary);
   --color-foreground: var(--text-primary);
@@ -125,5 +162,158 @@ h3 {
 
   50% {
     opacity: 0.5;
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes progressShrink {
+  from {
+    width: 100%;
+  }
+
+  to {
+    width: 0%;
+  }
+}
+
+/* ─── Skeleton Loader ─── */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-tertiary) 50%, var(--bg-secondary) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Card Hover Lift ─── */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+/* ─── Button Press Feedback ─── */
+.btn-press {
+  transition: transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+.btn-press:active {
+  transform: scale(0.97);
+}
+
+/* ─── Fade In ─── */
+.fade-in {
+  animation: fadeIn 0.3s ease both;
+}
+
+/* ─── Scale In (modals, palettes) ─── */
+.scale-in {
+  animation: scaleIn 0.2s ease both;
+}
+
+/* ─── Toast animations ─── */
+.toast-enter {
+  animation: slideInRight 0.3s ease both;
+}
+
+.toast-exit {
+  animation: slideOutRight 0.25s ease both;
+}
+
+/* ─── Responsive: Mobile ─── */
+@media (max-width: 768px) {
+  .desktop-only {
+    display: none !important;
+  }
+
+  .mobile-only {
+    display: flex !important;
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal-responsive {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 85vh !important;
+    overflow-y: auto !important;
+  }
+
+  .grid-mobile-1 {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobile-only {
+    display: none !important;
   }
 }

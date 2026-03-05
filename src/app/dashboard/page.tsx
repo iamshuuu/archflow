@@ -1,34 +1,52 @@
 "use client";
 
-import { TrendingUp, TrendingDown, ArrowUpRight, Clock, DollarSign, FolderKanban, Users, Inbox, FileText, Send, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import {
+    TrendingUp,
+    TrendingDown,
+    ArrowUpRight,
+    Clock,
+    DollarSign,
+    FolderKanban,
+    Users,
+    Inbox,
+    FileText,
+    Send,
+    AlertTriangle,
+    Activity,
+    Target,
+    ChevronDown,
+    ChevronRight,
+    CheckCircle2,
+    Circle,
+    Zap,
+    BarChart3,
+} from "lucide-react";
 import { trpc } from "@/app/providers";
 import { useSession } from "next-auth/react";
 
 export default function DashboardPage() {
     const { data: session } = useSession();
+    const { data: kpis } = trpc.analytics.firmKPIs.useQuery();
     const { data: rawProjects = [] } = trpc.project.list.useQuery();
-    const { data: rawTeam = [] } = trpc.team.list.useQuery();
     const { data: rawInvoices = [] } = trpc.invoice.list.useQuery();
-    const { data: rawClients = [] } = trpc.clients.list.useQuery();
     const { data: rawTime = [] } = trpc.time.list.useQuery();
+    const { data: rawClients = [] } = trpc.clients.list.useQuery();
 
-    // Compute stats from real data
-    const activeProjects = rawProjects.filter((p: any) => p.status === "active");
-    const totalHours = rawTeam.reduce((s: number, m: any) => s + (m.timeEntries || []).reduce((hs: number, te: any) => hs + te.hours, 0), 0);
-    const revenueMTD = rawInvoices.filter((i: any) => i.status === "paid").reduce((s: number, i: any) => s + i.amount, 0);
-    const avgUtil = rawTeam.length > 0 ? Math.round(rawTeam.reduce((s: number, m: any) => {
-        const hrs = (m.timeEntries || []).reduce((hs: number, te: any) => hs + te.hours, 0);
-        return s + Math.min(100, Math.round((hrs / 240) * 100));
-    }, 0) / rawTeam.length) : 0;
+    const [onboardingOpen, setOnboardingOpen] = useState(true);
 
-    const stats = [
-        { label: "Active Projects", value: String(activeProjects.length), change: "", up: true, icon: FolderKanban, color: "var(--accent-primary)" },
-        { label: "Hours Logged", value: String(Math.round(totalHours)), change: "", up: true, icon: Clock, color: "var(--accent-secondary)" },
-        { label: "Revenue (Paid)", value: `$${(revenueMTD / 1000).toFixed(1)}k`, change: "", up: true, icon: DollarSign, color: "var(--accent-gold)" },
-        { label: "Team Utilization", value: `${avgUtil}%`, change: "", up: true, icon: Users, color: "var(--info)" },
-    ];
+    // Greeting
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+    const userName = session?.user?.name?.split(" ")[0] || "there";
 
-    // Recent projects from DB
+    const fmt = (v: number) => {
+        if (Math.abs(v) >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
+        if (Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(1)}k`;
+        return `$${v.toLocaleString()}`;
+    };
+
+    // Recent projects
     const recentProjects = rawProjects.slice(0, 5).map((p: any) => ({
         name: p.name,
         client: p.client?.name || "—",
@@ -38,29 +56,12 @@ export default function DashboardPage() {
         status: p.status === "active" ? "on-track" : "at-risk",
     }));
 
-    // Team timesheets from DB
-    const recentTimesheets = rawTeam.slice(0, 5).map((m: any) => {
-        const hrs = (m.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
-        const submitted = (m.timeEntries || []).some((te: any) => te.status === "submitted" || te.status === "approved");
-        return {
-            person: m.name,
-            initials: m.name.split(" ").map((p: string) => p[0]).join("").toUpperCase().slice(0, 2),
-            hours: hrs,
-            submitted,
-        };
-    });
-    const submittedCount = recentTimesheets.filter(t => t.submitted).length;
-
-    // Revenue chart — simple bar heights from project contract values
-    const months = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
-    const totalContract = rawProjects.reduce((s: number, p: any) => s + (p.contractValue || 0), 0);
-    const monthlyEstimate = totalContract > 0 ? totalContract / 12 : 0;
-    const revenueData = months.map(() => monthlyEstimate > 0 ? Math.round(30 + Math.random() * 60) : 10);
-
-    // Greeting based on time of day
-    const hour = new Date().getHours();
-    const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-    const userName = session?.user?.name?.split(" ")[0] || "there";
+    // Smart Inbox items
+    const inboxItems: { type: string; label: string; badge: string; color: string; bg: string; href: string }[] = [];
+    (rawInvoices as any[]).filter((i: any) => i.status === "overdue").forEach((i: any) => inboxItems.push({ type: "Invoice", label: `Invoice #${i.number || i.id.slice(0, 6)} is overdue`, badge: "Overdue", color: "var(--danger)", bg: "rgba(176,80,64,0.08)", href: "/dashboard/invoices" }));
+    (rawTime as any[]).filter((t: any) => t.status === "submitted").forEach((t: any) => inboxItems.push({ type: "Timesheet", label: `${t.user?.name || "Team member"} submitted ${t.hours}h for review`, badge: "Review", color: "var(--warning)", bg: "rgba(176,138,48,0.08)", href: "/dashboard/time" }));
+    (rawClients as any[]).forEach((c: any) => (c.proposals || []).filter((p: any) => p.status === "draft").forEach((p: any) => inboxItems.push({ type: "Proposal", label: `Draft proposal "${p.title}" for ${c.name}`, badge: "Draft", color: "var(--info)", bg: "rgba(90,122,144,0.08)", href: "/dashboard/clients" })));
+    (rawInvoices as any[]).filter((i: any) => i.status === "sent" || i.status === "viewed").forEach((i: any) => inboxItems.push({ type: "Invoice", label: `Invoice #${i.number || i.id.slice(0, 6)} awaiting payment`, badge: "Pending", color: "var(--text-muted)", bg: "var(--bg-secondary)", href: "/dashboard/invoices" }));
 
     return (
         <div>
@@ -74,81 +75,233 @@ export default function DashboardPage() {
                 </p>
             </div>
 
-            {/* Stats row */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
-                {stats.map((stat, i) => (
-                    <div key={i} style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <p style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{stat.label}</p>
-                            <div style={{ width: "32px", height: "32px", borderRadius: "6px", background: `color-mix(in srgb, ${stat.color} 8%, transparent)`, border: `1px solid color-mix(in srgb, ${stat.color} 12%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                <stat.icon size={14} style={{ color: stat.color }} />
-                            </div>
+            {/* ─── KPI Row (5 cards) ─── */}
+            <div className="grid-mobile-1" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "14px", marginBottom: "24px" }}>
+                {/* Operating Profit */}
+                <div className="card-hover" style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Operating Profit</p>
+                        <div style={{ width: "30px", height: "30px", borderRadius: "6px", background: (kpis?.operatingProfit ?? 0) >= 0 ? "rgba(90,122,70,0.08)" : "rgba(176,80,64,0.08)", border: `1px solid ${(kpis?.operatingProfit ?? 0) >= 0 ? "rgba(90,122,70,0.12)" : "rgba(176,80,64,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <DollarSign size={13} style={{ color: (kpis?.operatingProfit ?? 0) >= 0 ? "var(--success)" : "var(--danger)" }} />
                         </div>
-                        <p style={{ marginTop: "10px", fontSize: "28px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{stat.value}</p>
                     </div>
-                ))}
+                    <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
+                        {fmt(kpis?.operatingProfit ?? 0)}
+                    </p>
+                    <div style={{ display: "flex", alignItems: "center", gap: "4px", marginTop: "4px" }}>
+                        {(kpis?.operatingProfit ?? 0) >= 0 ? <TrendingUp size={10} style={{ color: "var(--success)" }} /> : <TrendingDown size={10} style={{ color: "var(--danger)" }} />}
+                        <span style={{ fontSize: "10px", color: (kpis?.operatingProfit ?? 0) >= 0 ? "var(--success)" : "var(--danger)", fontWeight: 500 }}>
+                            {(kpis?.operatingProfit ?? 0) >= 0 ? "Profitable" : "Loss"}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Utilization Rate */}
+                <div className="card-hover" style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Utilization Rate</p>
+                        <div style={{ width: "30px", height: "30px", borderRadius: "6px", background: "rgba(90,122,144,0.08)", border: "1px solid rgba(90,122,144,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <Target size={13} style={{ color: "var(--info)" }} />
+                        </div>
+                    </div>
+                    <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
+                        {kpis?.utilization ?? 0}%
+                    </p>
+                    {/* Mini gauge bar */}
+                    <div style={{ marginTop: "6px", height: "4px", borderRadius: "2px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                        <div style={{
+                            height: "100%", borderRadius: "2px", transition: "width 0.6s ease",
+                            width: `${Math.min(kpis?.utilization ?? 0, 100)}%`,
+                            background: (kpis?.utilization ?? 0) >= 75 ? "var(--success)" : (kpis?.utilization ?? 0) >= 50 ? "var(--warning)" : "var(--danger)",
+                        }} />
+                    </div>
+                    <p style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "3px" }}>Target: 75%</p>
+                </div>
+
+                {/* Projected Profit */}
+                <div className="card-hover" style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Projected Profit</p>
+                        <div style={{ width: "30px", height: "30px", borderRadius: "6px", background: "rgba(176,122,74,0.08)", border: "1px solid rgba(176,122,74,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <TrendingUp size={13} style={{ color: "var(--accent-primary)" }} />
+                        </div>
+                    </div>
+                    <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
+                        {fmt(kpis?.projectedProfit ?? 0)}
+                    </p>
+                    <p style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "4px" }}>
+                        Based on {kpis?.activeProjects ?? 0} active projects
+                    </p>
+                </div>
+
+                {/* Firm Capacity */}
+                <div className="card-hover" style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Firm Capacity</p>
+                        <div style={{ width: "30px", height: "30px", borderRadius: "6px", background: "rgba(90,122,70,0.08)", border: "1px solid rgba(90,122,70,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <Users size={13} style={{ color: "var(--success)" }} />
+                        </div>
+                    </div>
+                    <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
+                        {kpis?.availableHours ?? 0}h
+                    </p>
+                    <p style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "4px" }}>
+                        of {kpis?.weeklyCapacity ?? 0}h available this week
+                    </p>
+                </div>
+
+                {/* Hours This Week */}
+                <div className="card-hover" style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Hours This Week</p>
+                        <div style={{ width: "30px", height: "30px", borderRadius: "6px", background: "rgba(176,122,74,0.08)", border: "1px solid rgba(176,122,74,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <Clock size={13} style={{ color: "var(--accent-primary)" }} />
+                        </div>
+                    </div>
+                    <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
+                        {kpis?.hoursThisWeek ?? 0}h
+                    </p>
+                    <div style={{ display: "flex", alignItems: "center", gap: "4px", marginTop: "4px" }}>
+                        {(kpis?.weekOverWeekDelta ?? 0) >= 0 ? <TrendingUp size={10} style={{ color: "var(--success)" }} /> : <TrendingDown size={10} style={{ color: "var(--danger)" }} />}
+                        <span style={{ fontSize: "10px", color: (kpis?.weekOverWeekDelta ?? 0) >= 0 ? "var(--success)" : "var(--danger)", fontWeight: 500 }}>
+                            {(kpis?.weekOverWeekDelta ?? 0) >= 0 ? "+" : ""}{kpis?.weekOverWeekDelta ?? 0}% vs last week
+                        </span>
+                    </div>
+                </div>
             </div>
 
-            {/* Main grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                {/* Revenue chart */}
+            {/* ─── Main grid ─── */}
+            <div className="grid-mobile-1" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+
+                {/* Revenue chart (real monthly data) */}
                 <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
                         <div>
                             <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Revenue</h3>
-                            <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>Monthly breakdown — FY 2026</p>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>Monthly invoiced vs paid — FY 2026</p>
                         </div>
-                        <span style={{ fontSize: "10px", color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase", padding: "4px 10px", borderRadius: "4px", border: "1px solid var(--border-primary)" }}>12 Months</span>
+                        <div style={{ display: "flex", gap: "12px", fontSize: "9px", color: "var(--text-muted)" }}>
+                            <span style={{ display: "flex", alignItems: "center", gap: "4px" }}><span style={{ width: "6px", height: "6px", borderRadius: "1px", background: "rgba(176,122,74,0.3)" }} />Invoiced</span>
+                            <span style={{ display: "flex", alignItems: "center", gap: "4px" }}><span style={{ width: "6px", height: "6px", borderRadius: "1px", background: "var(--accent-primary)" }} />Paid</span>
+                        </div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: "6px", height: "140px" }}>
-                        {revenueData.map((h, i) => (
-                            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
-                                <div
-                                    style={{
-                                        width: "100%",
-                                        borderRadius: "3px 3px 0 0",
-                                        height: `${h}%`,
-                                        background: i === new Date().getMonth() ? "var(--accent-primary)" : "rgba(176,122,74,0.12)",
-                                        transition: "height 0.6s ease",
-                                        minHeight: "4px",
-                                    }}
-                                />
-                                <span style={{ fontSize: "8px", color: "var(--text-muted)", marginTop: "6px", fontWeight: 400 }}>{months[i]}</span>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: "4px", height: "140px" }}>
+                        {(kpis?.monthlyRevenue ?? Array.from({ length: 12 }, (_, i) => ({ month: new Date(2026, i).toLocaleString("en", { month: "short" }), invoiced: 0, paid: 0 }))).map((m: any, i: number) => {
+                            const maxVal = Math.max(...(kpis?.monthlyRevenue ?? []).map((r: any) => Math.max(r.invoiced, r.paid)), 1);
+                            const invoicedH = maxVal > 0 ? Math.max(4, (m.invoiced / maxVal) * 100) : 4;
+                            const paidH = maxVal > 0 ? Math.max(4, (m.paid / maxVal) * 100) : 4;
+                            const isCurrentMonth = i === new Date().getMonth();
+                            return (
+                                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", gap: "1px" }}>
+                                    <div style={{ width: "100%", display: "flex", gap: "1px", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                                        <div style={{ flex: 1, borderRadius: "2px 2px 0 0", height: `${invoicedH}%`, background: "rgba(176,122,74,0.15)", transition: "height 0.6s", minHeight: "2px" }} />
+                                        <div style={{ flex: 1, borderRadius: "2px 2px 0 0", height: `${paidH}%`, background: isCurrentMonth ? "var(--accent-primary)" : "rgba(176,122,74,0.4)", transition: "height 0.6s", minHeight: "2px" }} />
+                                    </div>
+                                    <span style={{ fontSize: "8px", color: isCurrentMonth ? "var(--accent-primary)" : "var(--text-muted)", marginTop: "4px", fontWeight: isCurrentMonth ? 600 : 400 }}>{m.month?.[0] || ""}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Team Workload Balance */}
+                <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                        <div>
+                            <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Team Workload</h3>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>This week&apos;s hours by person</p>
+                        </div>
+                        <a href="/dashboard/resources" style={{ fontSize: "11px", color: "var(--accent-primary)", textDecoration: "none", fontWeight: 500, display: "flex", alignItems: "center", gap: "3px" }}>
+                            View all <ArrowUpRight size={10} />
+                        </a>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                        {(kpis?.teamWorkload ?? []).length === 0 ? (
+                            <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "13px", padding: "20px 0", fontWeight: 300 }}>No team data yet.</p>
+                        ) : (kpis?.teamWorkload ?? []).slice(0, 5).map((m: any, i: number) => (
+                            <div key={i}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <div style={{ width: "24px", height: "24px", borderRadius: "50%", background: m.utilization >= (m.targetUtil || 75) ? "rgba(90,122,70,0.08)" : "var(--bg-secondary)", border: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px", fontWeight: 600, color: "var(--text-muted)" }}>
+                                            {m.name.split(" ").map((p: string) => p[0]).join("").slice(0, 2)}
+                                        </div>
+                                        <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{m.name}</span>
+                                    </div>
+                                    <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{m.hoursThisWeek}h / 40h</span>
+                                </div>
+                                <div style={{ height: "6px", borderRadius: "3px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                                    <div style={{
+                                        height: "100%", borderRadius: "3px", transition: "width 0.4s",
+                                        width: `${Math.min((m.hoursThisWeek / 40) * 100, 100)}%`,
+                                        background: m.utilization >= (m.targetUtil || 75) ? "var(--success)" : m.utilization >= 50 ? "var(--warning)" : "rgba(176,122,74,0.4)",
+                                    }} />
+                                </div>
                             </div>
                         ))}
                     </div>
                 </div>
 
-                {/* Empty state or deadlines */}
-                <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                        <div>
-                            <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Upcoming Deadlines</h3>
-                            <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>Next 14 days</p>
-                        </div>
-                    </div>
-                    {rawProjects.length === 0 ? (
-                        <div style={{ padding: "30px 0", textAlign: "center" }}>
-                            <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No projects yet — create one to get started.</p>
-                        </div>
-                    ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                            {rawProjects.slice(0, 3).map((p: any, i: number) => (
-                                <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px", borderRadius: "6px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)" }}>
-                                    <div>
-                                        <p style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{p.phases?.[0]?.name || "General"}</p>
-                                        <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "1px" }}>{p.name}</p>
-                                    </div>
-                                    <div style={{ textAlign: "right" }}>
-                                        <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>{p.endDate || "—"}</p>
-                                    </div>
+                {/* ─── Onboarding Checklist ─── */}
+                {kpis?.onboarding && kpis.onboarding.completedCount < kpis.onboarding.totalCount && (
+                    <div style={{ gridColumn: "span 2", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                        <button
+                            onClick={() => setOnboardingOpen(!onboardingOpen)}
+                            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", border: "none", background: "none", cursor: "pointer", textAlign: "left" }}
+                        >
+                            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                                <div style={{ width: "32px", height: "32px", borderRadius: "8px", background: "linear-gradient(135deg, rgba(176,122,74,0.1), rgba(176,122,74,0.05))", border: "1px solid rgba(176,122,74,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                    <Zap size={14} style={{ color: "var(--accent-primary)" }} />
                                 </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+                                <div>
+                                    <h3 style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)", margin: 0 }}>Get Started with ArchFlow</h3>
+                                    <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>
+                                        {kpis.onboarding.completedCount} of {kpis.onboarding.totalCount} steps completed
+                                    </p>
+                                </div>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                                {/* Progress bar */}
+                                <div style={{ width: "120px", height: "5px", borderRadius: "3px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                                    <div style={{ height: "100%", borderRadius: "3px", background: "var(--accent-primary)", width: `${(kpis.onboarding.completedCount / kpis.onboarding.totalCount) * 100}%`, transition: "width 0.4s" }} />
+                                </div>
+                                {onboardingOpen ? <ChevronDown size={14} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />}
+                            </div>
+                        </button>
+                        {onboardingOpen && (
+                            <div style={{ padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: "4px" }}>
+                                {kpis.onboarding.steps.map((step: any) => (
+                                    <a
+                                        key={step.key}
+                                        href={step.href}
+                                        style={{
+                                            display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: "6px",
+                                            background: step.done ? "transparent" : "var(--bg-warm)", border: step.done ? "1px solid transparent" : "1px solid var(--border-primary)",
+                                            textDecoration: "none", transition: "all 0.15s", opacity: step.done ? 0.5 : 1,
+                                        }}
+                                        onMouseEnter={(e) => { if (!step.done) e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
+                                        onMouseLeave={(e) => { if (!step.done) e.currentTarget.style.borderColor = "var(--border-primary)"; }}
+                                    >
+                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                            {step.done
+                                                ? <CheckCircle2 size={15} style={{ color: "var(--success)", flexShrink: 0 }} />
+                                                : <Circle size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                                            }
+                                            <span style={{ fontSize: "12px", fontWeight: step.done ? 400 : 500, color: step.done ? "var(--text-muted)" : "var(--text-primary)", textDecoration: step.done ? "line-through" : "none" }}>
+                                                {step.label}
+                                            </span>
+                                        </div>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                            {!step.done && <span style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: 400 }}>~{step.est}</span>}
+                                            {!step.done && <ArrowUpRight size={11} style={{ color: "var(--text-muted)" }} />}
+                                        </div>
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
 
-                {/* Projects table */}
+                {/* Active Projects table */}
                 <div style={{ gridColumn: "span 2", padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
                         <div>
@@ -214,41 +367,6 @@ export default function DashboardPage() {
                     )}
                 </div>
 
-                {/* Timesheets */}
-                <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                        <div>
-                            <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Timesheets</h3>
-                            <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>Team submissions</p>
-                        </div>
-                        <span style={{ fontSize: "11px", color: "var(--accent-primary)", fontWeight: 500 }}>{submittedCount}/{recentTimesheets.length} submitted</span>
-                    </div>
-                    {recentTimesheets.length === 0 ? (
-                        <div style={{ padding: "20px 0", textAlign: "center" }}>
-                            <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No team members yet.</p>
-                        </div>
-                    ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                            {recentTimesheets.map((ts, i) => (
-                                <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px", borderRadius: "6px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)" }}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                        <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: ts.submitted ? "rgba(90,122,70,0.08)" : "var(--bg-secondary)", border: ts.submitted ? "1px solid rgba(90,122,70,0.15)" : "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 600, color: ts.submitted ? "var(--success)" : "var(--text-muted)" }}>
-                                            {ts.initials}
-                                        </div>
-                                        <div>
-                                            <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{ts.person}</p>
-                                            <p style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 300 }}>{ts.hours}h logged</p>
-                                        </div>
-                                    </div>
-                                    <span style={{ fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", textTransform: "uppercase", letterSpacing: "0.04em", color: ts.submitted ? "var(--success)" : "var(--warning)", background: ts.submitted ? "rgba(90,122,70,0.08)" : "rgba(176,138,48,0.08)" }}>
-                                        {ts.submitted ? "Submitted" : "Pending"}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
                 {/* Smart Inbox */}
                 <div style={{ gridColumn: "span 2", padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
@@ -262,43 +380,31 @@ export default function DashboardPage() {
                             </div>
                         </div>
                     </div>
-                    {(() => {
-                        const items: { type: string; label: string; badge: string; color: string; bg: string; href: string }[] = [];
-                        // Overdue invoices
-                        (rawInvoices as any[]).filter((i: any) => i.status === "overdue").forEach((i: any) => items.push({ type: "Invoice", label: `Invoice #${i.number || i.id.slice(0, 6)} is overdue`, badge: "Overdue", color: "var(--danger)", bg: "rgba(176,80,64,0.08)", href: "/dashboard/invoices" }));
-                        // Submitted timesheets awaiting review
-                        (rawTime as any[]).filter((t: any) => t.status === "submitted").forEach((t: any) => items.push({ type: "Timesheet", label: `${t.user?.name || "Team member"} submitted ${t.hours}h for review`, badge: "Review", color: "var(--warning)", bg: "rgba(176,138,48,0.08)", href: "/dashboard/time" }));
-                        // Draft proposals
-                        (rawClients as any[]).forEach((c: any) => (c.proposals || []).filter((p: any) => p.status === "draft").forEach((p: any) => items.push({ type: "Proposal", label: `Draft proposal "${p.title}" for ${c.name}`, badge: "Draft", color: "var(--info)", bg: "rgba(90,122,144,0.08)", href: "/dashboard/clients" })));
-                        // Unpaid invoices
-                        (rawInvoices as any[]).filter((i: any) => i.status === "sent" || i.status === "viewed").forEach((i: any) => items.push({ type: "Invoice", label: `Invoice #${i.number || i.id.slice(0, 6)} awaiting payment`, badge: "Pending", color: "var(--text-muted)", bg: "var(--bg-secondary)", href: "/dashboard/invoices" }));
-
-                        return items.length === 0 ? (
-                            <div style={{ padding: "20px 0", textAlign: "center" }}>
-                                <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>All clear — no pending items.</p>
-                            </div>
-                        ) : (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                                {items.slice(0, 8).map((item, i) => (
-                                    <a key={i} href={item.href} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: "6px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)", textDecoration: "none" }}
-                                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
-                                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }}>
-                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                            <span style={{ fontSize: "9px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", color: item.color, background: item.bg }}>{item.type}</span>
-                                            <span style={{ fontSize: "12px", color: "var(--text-primary)", fontWeight: 400 }}>{item.label}</span>
-                                        </div>
-                                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                            <span style={{ fontSize: "9px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", color: item.color, background: item.bg }}>{item.badge}</span>
-                                            <ArrowUpRight size={12} style={{ color: "var(--text-muted)" }} />
-                                        </div>
-                                    </a>
-                                ))}
-                            </div>
-                        );
-                    })()}
+                    {inboxItems.length === 0 ? (
+                        <div style={{ padding: "20px 0", textAlign: "center" }}>
+                            <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>All clear — no pending items.</p>
+                        </div>
+                    ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                            {inboxItems.slice(0, 8).map((item, i) => (
+                                <a key={i} href={item.href} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: "6px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)", textDecoration: "none" }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                        <span style={{ fontSize: "9px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", color: item.color, background: item.bg }}>{item.type}</span>
+                                        <span style={{ fontSize: "12px", color: "var(--text-primary)", fontWeight: 400 }}>{item.label}</span>
+                                    </div>
+                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                        <span style={{ fontSize: "9px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", color: item.color, background: item.bg }}>{item.badge}</span>
+                                        <ArrowUpRight size={12} style={{ color: "var(--text-muted)" }} />
+                                    </div>
+                                </a>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
-                {/* Quick actions */}
+                {/* Quick Actions */}
                 <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                     <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "20px" }}>Quick Actions</h3>
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -324,6 +430,35 @@ export default function DashboardPage() {
                             </a>
                         ))}
                     </div>
+                </div>
+
+                {/* Deadlines */}
+                <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                        <div>
+                            <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Upcoming Deadlines</h3>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>Next 14 days</p>
+                        </div>
+                    </div>
+                    {rawProjects.length === 0 ? (
+                        <div style={{ padding: "30px 0", textAlign: "center" }}>
+                            <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No projects yet — create one to get started.</p>
+                        </div>
+                    ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                            {rawProjects.slice(0, 4).map((p: any, i: number) => (
+                                <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px", borderRadius: "6px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)" }}>
+                                    <div>
+                                        <p style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{p.phases?.[0]?.name || "General"}</p>
+                                        <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, marginTop: "1px" }}>{p.name}</p>
+                                    </div>
+                                    <div style={{ textAlign: "right" }}>
+                                        <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>{p.endDate || "—"}</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
