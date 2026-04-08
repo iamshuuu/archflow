@@ -96,7 +96,7 @@ export default function Hero() {
                         style={{ marginTop: "48px", display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "16px" }}
                     >
                         <a
-                            href="#"
+                            href="/signup"
                             style={{
                                 display: "inline-flex",
                                 alignItems: "center",

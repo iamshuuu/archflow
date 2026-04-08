@@ -15,6 +15,12 @@ export default function SignupPage() {
     });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [comingSoon, setComingSoon] = useState(false);
+
+    const showComingSoon = () => {
+        setComingSoon(true);
+        setTimeout(() => setComingSoon(false), 3000);
+    };
 
     const update = (k: string, v: string) =>
         setFormData((prev) => ({ ...prev, [k]: v }));
@@ -33,7 +39,7 @@ export default function SignupPage() {
             const res = await fetch("/api/auth/signup", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name: formData.fullName, email: formData.email, password: formData.password }),
+                body: JSON.stringify({ name: formData.fullName, email: formData.email, password: formData.password, firmName: formData.firmName }),
             });
             const data = await res.json();
             if (!res.ok) { setError(data.error || "Signup failed"); setLoading(false); return; }
@@ -166,7 +172,8 @@ export default function SignupPage() {
                             { name: "Microsoft", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M11.4 24H0V13l5.7-5.7L11.4 1h7.2l-5.7 5.7L7.2 12.3 11.4 24zM24 24h-7.2L11.1 12.6 16.8 7h7.2L18.3 12.6 24 24z" /></svg> },
                         ].map((provider) => (
                             <button key={provider.name} type="button"
-                                style={{ flex: 1, padding: "12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", fontSize: "13px", fontWeight: 500, color: "var(--text-secondary)", transition: "all 0.2s" }}
+                                onClick={showComingSoon}
+                                style={{ flex: 1, padding: "12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", fontSize: "13px", fontWeight: 500, color: "var(--text-secondary)", transition: "all 0.2s", opacity: 0.7 }}
                                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
                                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
                             >
@@ -268,8 +275,8 @@ export default function SignupPage() {
 
                         <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 300, lineHeight: 1.5, textAlign: "center" }}>
                             By creating an account, you agree to our{" "}
-                            <Link href="#" style={{ color: "var(--accent-primary)", textDecoration: "none" }}>Terms</Link>{" "}and{" "}
-                            <Link href="#" style={{ color: "var(--accent-primary)", textDecoration: "none" }}>Privacy Policy</Link>.
+                            <Link href="/terms" style={{ color: "var(--accent-primary)", textDecoration: "none" }}>Terms</Link>{" "}and{" "}
+                            <Link href="/privacy" style={{ color: "var(--accent-primary)", textDecoration: "none" }}>Privacy Policy</Link>.
                         </p>
                     </form>
 
@@ -279,6 +286,23 @@ export default function SignupPage() {
                             Sign in
                         </Link>
                     </p>
+
+                    {/* Coming Soon Toast */}
+                    {comingSoon && (
+                        <div style={{
+                            position: "fixed", bottom: "24px", left: "50%", transform: "translateX(-50%)",
+                            padding: "12px 24px", borderRadius: "8px",
+                            background: "var(--bg-card)", border: "1px solid var(--border-secondary)",
+                            boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+                            fontSize: "13px", color: "var(--text-secondary)", fontWeight: 400,
+                            zIndex: 1000, animation: "fadeInUp 0.3s ease",
+                            display: "flex", alignItems: "center", gap: "8px",
+                        }}>
+                            <span style={{ fontSize: "16px" }}>🚧</span>
+                            Coming soon — SSO integration is on the roadmap
+                        </div>
+                    )}
+                    <style>{`@keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
                 </div>
             </div>
         </div>

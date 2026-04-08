@@ -11,6 +11,17 @@ export default function LoginPage() {
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [comingSoon, setComingSoon] = useState(false);
+
+    const showComingSoon = () => {
+        setComingSoon(true);
+        setTimeout(() => setComingSoon(false), 3000);
+    };
+
+    const fillDemo = () => {
+        setEmail("karan@archflow.io");
+        setPassword("password123");
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -149,6 +160,7 @@ export default function LoginPage() {
                     <div style={{ marginTop: "32px", display: "flex", gap: "12px" }}>
                         <button
                             type="button"
+                            onClick={showComingSoon}
                             style={{
                                 flex: 1,
                                 padding: "12px",
@@ -164,6 +176,7 @@ export default function LoginPage() {
                                 fontWeight: 500,
                                 color: "var(--text-secondary)",
                                 transition: "all 0.2s",
+                                opacity: 0.7,
                             }}
                             onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
                             onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
@@ -178,6 +191,7 @@ export default function LoginPage() {
                         </button>
                         <button
                             type="button"
+                            onClick={showComingSoon}
                             style={{
                                 flex: 1,
                                 padding: "12px",
@@ -193,6 +207,7 @@ export default function LoginPage() {
                                 fontWeight: 500,
                                 color: "var(--text-secondary)",
                                 transition: "all 0.2s",
+                                opacity: 0.7,
                             }}
                             onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
                             onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
@@ -250,9 +265,9 @@ export default function LoginPage() {
                                 <label style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", letterSpacing: "0.02em" }}>
                                     Password
                                 </label>
-                                <Link href="#" style={{ fontSize: "12px", color: "var(--accent-primary)", textDecoration: "none", fontWeight: 400 }}>
+                                <button type="button" onClick={showComingSoon} style={{ fontSize: "12px", color: "var(--accent-primary)", textDecoration: "none", fontWeight: 400, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
                                     Forgot password?
-                                </Link>
+                                </button>
                             </div>
                             <div style={{ position: "relative" }}>
                                 <input
@@ -332,6 +347,31 @@ export default function LoginPage() {
                             Create one
                         </Link>
                     </p>
+
+                    {/* Demo login helper */}
+                    <div style={{ marginTop: "24px", padding: "14px 16px", borderRadius: "8px", background: "rgba(176,122,74,0.04)", border: "1px dashed rgba(176,122,74,0.2)", textAlign: "center" }}>
+                        <p style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 400, marginBottom: "8px" }}>Want to explore with demo data?</p>
+                        <button type="button" onClick={fillDemo} style={{ fontSize: "12px", color: "var(--accent-primary)", background: "none", border: "none", cursor: "pointer", fontWeight: 500, textDecoration: "underline", textUnderlineOffset: "2px" }}>
+                            Use demo credentials
+                        </button>
+                    </div>
+
+                    {/* Coming Soon Toast */}
+                    {comingSoon && (
+                        <div style={{
+                            position: "fixed", bottom: "24px", left: "50%", transform: "translateX(-50%)",
+                            padding: "12px 24px", borderRadius: "8px",
+                            background: "var(--bg-card)", border: "1px solid var(--border-secondary)",
+                            boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+                            fontSize: "13px", color: "var(--text-secondary)", fontWeight: 400,
+                            zIndex: 1000, animation: "fadeInUp 0.3s ease",
+                            display: "flex", alignItems: "center", gap: "8px",
+                        }}>
+                            <span style={{ fontSize: "16px" }}>🚧</span>
+                            Coming soon — SSO integration is on the roadmap
+                        </div>
+                    )}
+                    <style>{`@keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
                 </div>
             </div>
         </div>

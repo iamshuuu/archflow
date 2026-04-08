@@ -94,7 +94,7 @@ export default function Navbar() {
                 {/* Desktop CTAs */}
                 <div style={{ display: "flex", alignItems: "center", gap: "16px" }} className="hidden md:flex">
                     <a
-                        href="#"
+                        href="/login"
                         style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-tertiary)", textDecoration: "none", transition: "color 0.3s" }}
                         onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
                         onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-tertiary)")}
@@ -102,7 +102,7 @@ export default function Navbar() {
                         Log in
                     </a>
                     <a
-                        href="#"
+                        href="/signup"
                         style={{
                             fontSize: "13px",
                             fontWeight: 500,
@@ -157,8 +157,8 @@ export default function Navbar() {
                                 </a>
                             ))}
                             <div style={{ borderTop: "1px solid var(--border-primary)", paddingTop: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-                                <a href="#" style={{ fontSize: "16px", color: "var(--text-secondary)", textDecoration: "none" }}>Log in</a>
-                                <a href="#" style={{ fontSize: "13px", fontWeight: 500, color: "white", textAlign: "center", padding: "14px", borderRadius: "4px", background: "var(--accent-primary)", letterSpacing: "0.04em", textTransform: "uppercase", textDecoration: "none" }}>
+                                <a href="/login" style={{ fontSize: "16px", color: "var(--text-secondary)", textDecoration: "none" }}>Log in</a>
+                                <a href="/signup" style={{ fontSize: "13px", fontWeight: 500, color: "white", textAlign: "center", padding: "14px", borderRadius: "4px", background: "var(--accent-primary)", letterSpacing: "0.04em", textTransform: "uppercase", textDecoration: "none" }}>
                                     Get Started
                                 </a>
                             </div>

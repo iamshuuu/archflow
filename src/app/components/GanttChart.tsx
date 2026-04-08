@@ -34,7 +34,7 @@ export interface GanttProject {
 interface GanttChartProps {
     projects: GanttProject[];
     onPhaseUpdate?: (phaseId: string, startDate: string, endDate: string) => void;
-    zoomLevel?: "month" | "quarter" | "year";
+    zoomLevel?: "day" | "week" | "month" | "quarter" | "year";
 }
 
 /* ─── Helpers ─── */
@@ -58,6 +58,7 @@ function addDays(d: Date, n: number): Date {
 }
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const DEFAULT_COLORS = [
     "#B07A4A", "#5A7A46", "#6B8DD6", "#B08A30", "#8BC6A0",
@@ -66,7 +67,7 @@ const DEFAULT_COLORS = [
 
 /* ─── Component ─── */
 
-export default function GanttChart({ projects, onPhaseUpdate, zoomLevel = "month" }: GanttChartProps) {
+export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: initialZoom = "month" }: GanttChartProps) {
     const svgRef = useRef<SVGSVGElement>(null);
     const [hoveredPhase, setHoveredPhase] = useState<string | null>(null);
     const [dragState, setDragState] = useState<{
@@ -74,6 +75,7 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel = "month
         origStart: string; origEnd: string;
     } | null>(null);
     const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+    const [zoomLevel, setZoomLevel] = useState<"day" | "week" | "month" | "quarter" | "year">(initialZoom);
 
     // Compute time range
     const { rangeStart, rangeEnd, totalDays, allPhases } = useMemo(() => {
@@ -97,9 +99,11 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel = "month
             maxDate = addDays(new Date(), 180);
         }
 
-        // Add padding
-        const start = addDays(minDate, -14);
-        const end = addDays(maxDate, 30);
+        // Add padding based on zoom
+        const padBefore = zoomLevel === "day" ? 3 : zoomLevel === "week" ? 7 : 14;
+        const padAfter = zoomLevel === "day" ? 7 : zoomLevel === "week" ? 14 : 30;
+        const start = addDays(minDate, -padBefore);
+        const end = addDays(maxDate, padAfter);
 
         return {
             rangeStart: start,
@@ -107,13 +111,13 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel = "month
             totalDays: daysBetween(start, end),
             allPhases: allP,
         };
-    }, [projects]);
+    }, [projects, zoomLevel]);
 
     // Layout
     const ROW_HEIGHT = 40;
     const HEADER_HEIGHT = 52;
     const LABEL_WIDTH = 220;
-    const dayWidth = zoomLevel === "year" ? 2 : zoomLevel === "quarter" ? 4 : 8;
+    const dayWidth = zoomLevel === "year" ? 2 : zoomLevel === "quarter" ? 4 : zoomLevel === "month" ? 8 : zoomLevel === "week" ? 16 : 28;
     const chartWidth = totalDays * dayWidth;
     const totalWidth = LABEL_WIDTH + chartWidth;
 
@@ -132,22 +136,54 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel = "month
 
     const totalHeight = HEADER_HEIGHT + rows.length * ROW_HEIGHT + 8;
 
-    // Generate month columns
-    const monthColumns = useMemo(() => {
-        const cols: { x: number; width: number; label: string; isToday?: boolean }[] = [];
-        const d = new Date(rangeStart);
-        d.setDate(1);
-        if (d < rangeStart) d.setMonth(d.getMonth() + 1);
+    // Generate column headers based on zoom level
+    const columnHeaders = useMemo(() => {
+        const cols: { x: number; width: number; label: string; isWeekend?: boolean }[] = [];
 
-        while (d <= rangeEnd) {
-            const x = daysBetween(rangeStart, d) * dayWidth;
-            const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-            const width = daysBetween(d, nextMonth > rangeEnd ? rangeEnd : nextMonth) * dayWidth;
-            cols.push({ x, width, label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}` });
-            d.setMonth(d.getMonth() + 1);
+        if (zoomLevel === "day") {
+            // Show each day
+            for (let i = 0; i < totalDays; i++) {
+                const d = addDays(rangeStart, i);
+                const x = i * dayWidth;
+                const dayNum = d.getDate();
+                const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                const label = i === 0 || dayNum === 1
+                    ? `${MONTH_NAMES[d.getMonth()]} ${dayNum}`
+                    : `${dayNum}`;
+                cols.push({ x, width: dayWidth, label, isWeekend });
+            }
+        } else if (zoomLevel === "week") {
+            // Show week boundaries (Monday starts)
+            const d = new Date(rangeStart);
+            // Move to next Monday
+            const dayOfWeek = d.getDay();
+            const daysToMonday = dayOfWeek === 0 ? 1 : (8 - dayOfWeek) % 7;
+            d.setDate(d.getDate() + daysToMonday);
+
+            while (d <= rangeEnd) {
+                const x = daysBetween(rangeStart, d) * dayWidth;
+                const weekEnd = addDays(d, 6);
+                const width = 7 * dayWidth;
+                const label = `${MONTH_NAMES[d.getMonth()]} ${d.getDate()} – ${weekEnd.getDate()}`;
+                cols.push({ x, width, label });
+                d.setDate(d.getDate() + 7);
+            }
+        } else {
+            // Month/Quarter/Year — show monthly columns
+            const d = new Date(rangeStart);
+            d.setDate(1);
+            if (d < rangeStart) d.setMonth(d.getMonth() + 1);
+
+            while (d <= rangeEnd) {
+                const x = daysBetween(rangeStart, d) * dayWidth;
+                const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+                const width = daysBetween(d, nextMonth > rangeEnd ? rangeEnd : nextMonth) * dayWidth;
+                cols.push({ x, width, label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}` });
+                d.setMonth(d.getMonth() + 1);
+            }
         }
         return cols;
-    }, [rangeStart, rangeEnd, dayWidth]);
+    }, [rangeStart, rangeEnd, dayWidth, totalDays, zoomLevel]);
 
     // Today line
     const today = new Date();
@@ -201,186 +237,246 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel = "month
         );
     }
 
+    const zoomOptions: { key: typeof zoomLevel; label: string }[] = [
+        { key: "day", label: "Day" },
+        { key: "week", label: "Week" },
+        { key: "month", label: "Month" },
+        { key: "quarter", label: "Quarter" },
+        { key: "year", label: "Year" },
+    ];
+
     return (
-        <div
-            style={{ width: "100%", overflowX: "auto", borderRadius: "10px", border: "1px solid var(--border-primary)", background: "var(--bg-card)" }}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-        >
-            <svg
-                ref={svgRef}
-                width={totalWidth}
-                height={totalHeight}
-                style={{ display: "block", fontFamily: "inherit" }}
+        <div style={{ borderRadius: "10px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", overflow: "hidden" }}>
+            {/* Zoom toolbar — stays fixed */}
+            <div style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "10px 16px", borderBottom: "1px solid var(--border-primary)",
+                background: "var(--bg-warm)",
+                position: "sticky", top: 0, zIndex: 10,
+            }}>
+                <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>
+                    Timeline
+                </span>
+                <div style={{ display: "flex", gap: "2px", background: "var(--bg-secondary)", borderRadius: "6px", padding: "2px" }}>
+                    {zoomOptions.map(opt => (
+                        <button
+                            key={opt.key}
+                            onClick={() => setZoomLevel(opt.key)}
+                            style={{
+                                padding: "5px 12px", borderRadius: "4px",
+                                border: "none", cursor: "pointer",
+                                fontSize: "11px", fontWeight: zoomLevel === opt.key ? 600 : 400,
+                                fontFamily: "inherit",
+                                color: zoomLevel === opt.key ? "white" : "var(--text-muted)",
+                                background: zoomLevel === opt.key ? "var(--accent-primary)" : "transparent",
+                                transition: "all 0.15s",
+                            }}
+                        >
+                            {opt.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Scrollable chart area */}
+            <div
+                className="gantt-scroll-area"
+                style={{ width: "100%", overflowX: "auto", overflowY: "hidden" }}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
             >
-                {/* Header background */}
-                <rect x={0} y={0} width={totalWidth} height={HEADER_HEIGHT} fill="var(--bg-warm)" />
-                <line x1={0} y1={HEADER_HEIGHT} x2={totalWidth} y2={HEADER_HEIGHT} stroke="var(--border-primary)" strokeWidth={1} />
+            <style>{`
+                .gantt-scroll-area::-webkit-scrollbar { height: 10px; }
+                .gantt-scroll-area::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 0 0 10px 10px; }
+                .gantt-scroll-area::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 5px; border: 2px solid var(--bg-secondary); }
+                .gantt-scroll-area::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
+                .gantt-scroll-area { scrollbar-width: thin; scrollbar-color: var(--border-secondary) var(--bg-secondary); }
+            `}</style>
+                <svg
+                    ref={svgRef}
+                    width={totalWidth}
+                    height={totalHeight}
+                    style={{ display: "block", fontFamily: "inherit" }}
+                >
+                    {/* Header background */}
+                    <rect x={0} y={0} width={totalWidth} height={HEADER_HEIGHT} fill="var(--bg-warm)" />
+                    <line x1={0} y1={HEADER_HEIGHT} x2={totalWidth} y2={HEADER_HEIGHT} stroke="var(--border-primary)" strokeWidth={1} />
 
-                {/* Label column header */}
-                <text x={16} y={32} fontSize={10} fontWeight={500} fill="var(--text-muted)" textAnchor="start" style={{ textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>
-                    Phase
-                </text>
-                <line x1={LABEL_WIDTH} y1={0} x2={LABEL_WIDTH} y2={totalHeight} stroke="var(--border-primary)" strokeWidth={1} />
+                    {/* Label column header */}
+                    <text x={16} y={32} fontSize={10} fontWeight={500} fill="var(--text-muted)" textAnchor="start" style={{ textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>
+                        Phase
+                    </text>
+                    <line x1={LABEL_WIDTH} y1={0} x2={LABEL_WIDTH} y2={totalHeight} stroke="var(--border-primary)" strokeWidth={1} />
 
-                {/* Month headers */}
-                {monthColumns.map((col, i) => (
-                    <g key={i}>
-                        <line x1={LABEL_WIDTH + col.x} y1={0} x2={LABEL_WIDTH + col.x} y2={totalHeight} stroke="var(--border-primary)" strokeWidth={0.5} opacity={0.5} />
-                        <text x={LABEL_WIDTH + col.x + 8} y={22} fontSize={10} fontWeight={500} fill="var(--text-muted)">
-                            {col.label}
-                        </text>
-                    </g>
-                ))}
+                    {/* Column headers */}
+                    {columnHeaders.map((col, i) => (
+                        <g key={i}>
+                            {/* Weekend shading for day view */}
+                            {col.isWeekend && (
+                                <rect
+                                    x={LABEL_WIDTH + col.x}
+                                    y={HEADER_HEIGHT}
+                                    width={col.width}
+                                    height={totalHeight - HEADER_HEIGHT}
+                                    fill="rgba(0,0,0,0.02)"
+                                />
+                            )}
+                            <line x1={LABEL_WIDTH + col.x} y1={0} x2={LABEL_WIDTH + col.x} y2={totalHeight} stroke="var(--border-primary)" strokeWidth={0.5} opacity={zoomLevel === "day" ? 0.3 : 0.5} />
+                            <text x={LABEL_WIDTH + col.x + (zoomLevel === "day" ? 4 : 8)} y={22} fontSize={zoomLevel === "day" ? 8 : 10} fontWeight={500} fill="var(--text-muted)">
+                                {col.label}
+                            </text>
+                        </g>
+                    ))}
 
-                {/* Today line */}
-                {todayX > 0 && todayX < chartWidth && (
-                    <g>
-                        <line x1={LABEL_WIDTH + todayX} y1={HEADER_HEIGHT} x2={LABEL_WIDTH + todayX} y2={totalHeight} stroke="var(--danger)" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.6} />
-                        <rect x={LABEL_WIDTH + todayX - 16} y={HEADER_HEIGHT - 16} width={32} height={14} rx={3} fill="var(--danger)" />
-                        <text x={LABEL_WIDTH + todayX} y={HEADER_HEIGHT - 6} fontSize={8} fontWeight={600} fill="white" textAnchor="middle">
-                            Today
-                        </text>
-                    </g>
-                )}
+                    {/* Today line */}
+                    {todayX > 0 && todayX < chartWidth && (
+                        <g>
+                            <line x1={LABEL_WIDTH + todayX} y1={HEADER_HEIGHT} x2={LABEL_WIDTH + todayX} y2={totalHeight} stroke="var(--danger)" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.6} />
+                            <rect x={LABEL_WIDTH + todayX - 16} y={HEADER_HEIGHT - 16} width={32} height={14} rx={3} fill="var(--danger)" />
+                            <text x={LABEL_WIDTH + todayX} y={HEADER_HEIGHT - 6} fontSize={8} fontWeight={600} fill="white" textAnchor="middle">
+                                Today
+                            </text>
+                        </g>
+                    )}
 
-                {/* Rows */}
-                {rows.map((row, i) => {
-                    const y = HEADER_HEIGHT + i * ROW_HEIGHT;
+                    {/* Rows */}
+                    {rows.map((row, i) => {
+                        const y = HEADER_HEIGHT + i * ROW_HEIGHT;
 
-                    if (row.type === "project") {
+                        if (row.type === "project") {
+                            return (
+                                <g key={row.id + "-header"}>
+                                    <rect x={0} y={y} width={totalWidth} height={ROW_HEIGHT} fill="rgba(176,122,74,0.04)" />
+                                    <line x1={0} y1={y + ROW_HEIGHT} x2={totalWidth} y2={y + ROW_HEIGHT} stroke="var(--border-primary)" strokeWidth={0.5} />
+                                    <text x={16} y={y + 24} fontSize={12} fontWeight={600} fill="var(--text-primary)">
+                                        {row.label}
+                                    </text>
+                                    {row.sub && (
+                                        <text x={16} y={y + 36} fontSize={9} fontWeight={300} fill="var(--text-muted)">
+                                            {row.sub}
+                                        </text>
+                                    )}
+                                </g>
+                            );
+                        }
+
+                        // Phase row
+                        const phase = row.phase!;
+                        const barX = getBarX(phase.startDate);
+                        const barW = getBarWidth(phase.startDate, phase.endDate);
+                        const barY = y + 10;
+                        const barH = 20;
+                        const color = phase.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
+                        const isHovered = hoveredPhase === phase.id;
+                        const isDragging = dragState?.phaseId === phase.id;
+
                         return (
-                            <g key={row.id + "-header"}>
-                                <rect x={0} y={y} width={totalWidth} height={ROW_HEIGHT} fill="rgba(176,122,74,0.04)" />
-                                <line x1={0} y1={y + ROW_HEIGHT} x2={totalWidth} y2={y + ROW_HEIGHT} stroke="var(--border-primary)" strokeWidth={0.5} />
-                                <text x={16} y={y + 24} fontSize={12} fontWeight={600} fill="var(--text-primary)">
+                            <g key={phase.id}>
+                                {/* Row background */}
+                                <rect x={0} y={y} width={totalWidth} height={ROW_HEIGHT} fill={isHovered ? "rgba(176,122,74,0.03)" : "transparent"} />
+                                <line x1={0} y1={y + ROW_HEIGHT} x2={totalWidth} y2={y + ROW_HEIGHT} stroke="var(--border-primary)" strokeWidth={0.3} />
+
+                                {/* Label */}
+                                <text x={32} y={y + 25} fontSize={12} fontWeight={400} fill="var(--text-secondary)">
                                     {row.label}
                                 </text>
-                                {row.sub && (
-                                    <text x={16} y={y + 36} fontSize={9} fontWeight={300} fill="var(--text-muted)">
-                                        {row.sub}
-                                    </text>
-                                )}
-                            </g>
-                        );
-                    }
 
-                    // Phase row
-                    const phase = row.phase!;
-                    const barX = getBarX(phase.startDate);
-                    const barW = getBarWidth(phase.startDate, phase.endDate);
-                    const barY = y + 10;
-                    const barH = 20;
-                    const color = phase.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
-                    const isHovered = hoveredPhase === phase.id;
-                    const isDragging = dragState?.phaseId === phase.id;
-
-                    return (
-                        <g key={phase.id}>
-                            {/* Row background */}
-                            <rect x={0} y={y} width={totalWidth} height={ROW_HEIGHT} fill={isHovered ? "rgba(176,122,74,0.03)" : "transparent"} />
-                            <line x1={0} y1={y + ROW_HEIGHT} x2={totalWidth} y2={y + ROW_HEIGHT} stroke="var(--border-primary)" strokeWidth={0.3} />
-
-                            {/* Label */}
-                            <text x={32} y={y + 25} fontSize={12} fontWeight={400} fill="var(--text-secondary)">
-                                {row.label}
-                            </text>
-
-                            {/* Bar */}
-                            <g
-                                onMouseEnter={() => { setHoveredPhase(phase.id); setTooltip(null); }}
-                                onMouseLeave={() => { setHoveredPhase(null); setTooltip(null); }}
-                                style={{ cursor: onPhaseUpdate ? (isDragging ? "grabbing" : "grab") : "default" }}
-                            >
-                                {/* Background bar */}
-                                <rect
-                                    x={LABEL_WIDTH + barX}
-                                    y={barY}
-                                    width={barW}
-                                    height={barH}
-                                    rx={4}
-                                    fill={color}
-                                    opacity={0.15}
-                                    stroke={isHovered ? color : "none"}
-                                    strokeWidth={1}
-                                    onMouseDown={(e) => onPhaseUpdate && handleMouseDown(e, phase.id, "move", phase.startDate, phase.endDate)}
-                                />
-                                {/* Progress fill */}
-                                {phase.progress > 0 && (
+                                {/* Bar */}
+                                <g
+                                    onMouseEnter={() => { setHoveredPhase(phase.id); setTooltip(null); }}
+                                    onMouseLeave={() => { setHoveredPhase(null); setTooltip(null); }}
+                                    style={{ cursor: onPhaseUpdate ? (isDragging ? "grabbing" : "grab") : "default" }}
+                                >
+                                    {/* Background bar */}
                                     <rect
                                         x={LABEL_WIDTH + barX}
                                         y={barY}
-                                        width={barW * Math.min(phase.progress, 100) / 100}
+                                        width={barW}
                                         height={barH}
                                         rx={4}
                                         fill={color}
-                                        opacity={0.5}
+                                        opacity={0.15}
+                                        stroke={isHovered ? color : "none"}
+                                        strokeWidth={1}
                                         onMouseDown={(e) => onPhaseUpdate && handleMouseDown(e, phase.id, "move", phase.startDate, phase.endDate)}
                                     />
-                                )}
-
-                                {/* Phase name on bar */}
-                                {barW > 60 && (
-                                    <text
-                                        x={LABEL_WIDTH + barX + 8}
-                                        y={barY + 14}
-                                        fontSize={10}
-                                        fontWeight={500}
-                                        fill={phase.progress > 20 ? "white" : color}
-                                        style={{ pointerEvents: "none" as const }}
-                                    >
-                                        {phase.name}
-                                    </text>
-                                )}
-
-                                {/* Resize handle */}
-                                {onPhaseUpdate && isHovered && (
-                                    <rect
-                                        x={LABEL_WIDTH + barX + barW - 6}
-                                        y={barY + 2}
-                                        width={6}
-                                        height={barH - 4}
-                                        rx={2}
-                                        fill={color}
-                                        opacity={0.7}
-                                        style={{ cursor: "ew-resize" }}
-                                        onMouseDown={(e) => handleMouseDown(e, phase.id, "resize-end", phase.startDate, phase.endDate)}
-                                    />
-                                )}
-                            </g>
-
-                            {/* Milestones */}
-                            {phase.milestones.map((ms) => {
-                                const msX = LABEL_WIDTH + daysBetween(rangeStart, parseDate(ms.date)) * dayWidth;
-                                return (
-                                    <g key={ms.id}
-                                        onMouseEnter={(e) => setTooltip({ x: msX, y: barY - 4, text: `${ms.name} — ${ms.date}${ms.done ? " ✓" : ""}` })}
-                                        onMouseLeave={() => setTooltip(null)}
-                                    >
-                                        <polygon
-                                            points={`${msX},${barY - 2} ${msX + 5},${barY + 4} ${msX},${barY + 10} ${msX - 5},${barY + 4}`}
-                                            fill={ms.done ? "var(--success)" : color}
-                                            stroke="white"
-                                            strokeWidth={1}
+                                    {/* Progress fill */}
+                                    {phase.progress > 0 && (
+                                        <rect
+                                            x={LABEL_WIDTH + barX}
+                                            y={barY}
+                                            width={barW * Math.min(phase.progress, 100) / 100}
+                                            height={barH}
+                                            rx={4}
+                                            fill={color}
+                                            opacity={0.5}
+                                            onMouseDown={(e) => onPhaseUpdate && handleMouseDown(e, phase.id, "move", phase.startDate, phase.endDate)}
                                         />
-                                    </g>
-                                );
-                            })}
-                        </g>
-                    );
-                })}
+                                    )}
 
-                {/* Tooltip */}
-                {tooltip && (
-                    <g>
-                        <rect x={tooltip.x - 60} y={tooltip.y - 20} width={120} height={16} rx={3} fill="var(--text-primary)" />
-                        <text x={tooltip.x} y={tooltip.y - 8} fontSize={9} fill="white" textAnchor="middle" fontWeight={400}>
-                            {tooltip.text}
-                        </text>
-                    </g>
-                )}
-            </svg>
+                                    {/* Phase name on bar */}
+                                    {barW > 60 && (
+                                        <text
+                                            x={LABEL_WIDTH + barX + 8}
+                                            y={barY + 14}
+                                            fontSize={10}
+                                            fontWeight={500}
+                                            fill={phase.progress > 20 ? "white" : color}
+                                            style={{ pointerEvents: "none" as const }}
+                                        >
+                                            {phase.name}
+                                        </text>
+                                    )}
+
+                                    {/* Resize handle */}
+                                    {onPhaseUpdate && isHovered && (
+                                        <rect
+                                            x={LABEL_WIDTH + barX + barW - 6}
+                                            y={barY + 2}
+                                            width={6}
+                                            height={barH - 4}
+                                            rx={2}
+                                            fill={color}
+                                            opacity={0.7}
+                                            style={{ cursor: "ew-resize" }}
+                                            onMouseDown={(e) => handleMouseDown(e, phase.id, "resize-end", phase.startDate, phase.endDate)}
+                                        />
+                                    )}
+                                </g>
+
+                                {/* Milestones */}
+                                {phase.milestones.map((ms) => {
+                                    const msX = LABEL_WIDTH + daysBetween(rangeStart, parseDate(ms.date)) * dayWidth;
+                                    return (
+                                        <g key={ms.id}
+                                            onMouseEnter={(e) => setTooltip({ x: msX, y: barY - 4, text: `${ms.name} — ${ms.date}${ms.done ? " ✓" : ""}` })}
+                                            onMouseLeave={() => setTooltip(null)}
+                                        >
+                                            <polygon
+                                                points={`${msX},${barY - 2} ${msX + 5},${barY + 4} ${msX},${barY + 10} ${msX - 5},${barY + 4}`}
+                                                fill={ms.done ? "var(--success)" : color}
+                                                stroke="white"
+                                                strokeWidth={1}
+                                            />
+                                        </g>
+                                    );
+                                })}
+                            </g>
+                        );
+                    })}
+
+                    {/* Tooltip */}
+                    {tooltip && (
+                        <g>
+                            <rect x={tooltip.x - 60} y={tooltip.y - 20} width={120} height={16} rx={3} fill="var(--text-primary)" />
+                            <text x={tooltip.x} y={tooltip.y - 8} fontSize={9} fill="white" textAnchor="middle" fontWeight={400}>
+                                {tooltip.text}
+                            </text>
+                        </g>
+                    )}
+                </svg>
+            </div>
         </div>
     );
 }

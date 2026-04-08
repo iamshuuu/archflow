@@ -31,6 +31,10 @@ export const metadata: Metadata = {
     "practice management",
     "AEC",
   ],
+  icons: {
+    icon: "/favicon.svg",
+    apple: "/favicon.svg",
+  },
   openGraph: {
     title: "ArchFlow — Design More. Manage Less.",
     description:

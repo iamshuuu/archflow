@@ -308,6 +308,41 @@ export default function SettingsPage() {
                             </div>
                         </div>
                     </div>
+
+                    {/* Preview card */}
+                    <div style={cardStyle}>
+                        <p style={sectionTitle}><Globe size={16} /> Format Preview</p>
+                        <p style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 300, marginBottom: "16px" }}>
+                            Preview of how values will be displayed across the platform.
+                        </p>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+                            <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Currency</p>
+                                <p style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
+                                    {(() => {
+                                        try {
+                                            return new Intl.NumberFormat(getVal("locale") || "en-US", {
+                                                style: "currency",
+                                                currency: getVal("currency") || "USD",
+                                            }).format(12450.00);
+                                        } catch { return "$12,450.00"; }
+                                    })()}
+                                </p>
+                            </div>
+                            <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Date Format</p>
+                                <p style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
+                                    {new Date().toLocaleDateString(getVal("locale") || "en-US", { year: "numeric", month: "short", day: "numeric" })}
+                                </p>
+                            </div>
+                            <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Measurement</p>
+                                <p style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
+                                    {getVal("unitOfMeasurement") === "meters" ? "1,200 m²" : "12,916 ft²"}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
 

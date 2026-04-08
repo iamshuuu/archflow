@@ -75,6 +75,7 @@ export default function DashboardLayout({
     const [isMobile, setIsMobile] = useState(false);
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     const [theme, setTheme] = useState<"light" | "dark">("light");
+    const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
 
     // ─── Dark mode init ───
     useEffect(() => {
@@ -396,7 +397,7 @@ export default function DashboardLayout({
                                     <p style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 300 }}>{(session?.user as any)?.role || "Member"}</p>
                                 </div>
                             )}
-                            {(!collapsed || isMobile) && <LogOut size={14} style={{ color: "var(--text-muted)", flexShrink: 0, cursor: "pointer" }} onClick={() => signOut({ callbackUrl: "/login" })} />}
+                            {(!collapsed || isMobile) && <LogOut size={14} style={{ color: "var(--text-muted)", flexShrink: 0, cursor: "pointer" }} onClick={() => setShowSignOutConfirm(true)} />}
                         </div>
                     </div>
 
@@ -619,6 +620,26 @@ export default function DashboardLayout({
                     </main>
                 </div>
             </div>
+
+            {/* Sign-out confirmation modal */}
+            {showSignOutConfirm && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowSignOutConfirm(false)}>
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(4px)" }} />
+                    <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: "380px", background: "var(--bg-card)", borderRadius: "12px", border: "1px solid var(--border-secondary)", boxShadow: "0 20px 60px rgba(0,0,0,0.15)", padding: "28px", textAlign: "center" }}>
+                        <div style={{ width: "48px", height: "48px", borderRadius: "50%", background: "rgba(176,80,64,0.08)", border: "1px solid rgba(176,80,64,0.15)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                            <LogOut size={20} style={{ color: "var(--danger)" }} />
+                        </div>
+                        <h3 style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "8px" }}>Sign out?</h3>
+                        <p style={{ fontSize: "13px", color: "var(--text-tertiary)", fontWeight: 300, marginBottom: "24px", lineHeight: 1.5 }}>
+                            You&apos;ll need to sign in again to access your dashboard.
+                        </p>
+                        <div style={{ display: "flex", gap: "10px" }}>
+                            <button onClick={() => setShowSignOutConfirm(false)} style={{ flex: 1, padding: "11px 20px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer", fontWeight: 400, fontFamily: "inherit" }}>Cancel</button>
+                            <button onClick={() => signOut({ callbackUrl: "/login" })} style={{ flex: 1, padding: "11px 20px", borderRadius: "6px", border: "none", background: "var(--danger)", fontSize: "13px", color: "white", cursor: "pointer", fontWeight: 500, fontFamily: "inherit" }}>Sign out</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </ToastProvider>
     );
 }

@@ -4,10 +4,26 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
     try {
-        const { name, email, password } = await req.json();
+        const { name, email, password, firmName } = await req.json();
 
         if (!name || !email || !password) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        // Server-side password validation
+        if (password.length < 8) {
+            return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+        }
+        if (!/[A-Z]/.test(password)) {
+            return NextResponse.json({ error: "Password must contain an uppercase letter" }, { status: 400 });
+        }
+        if (!/\d/.test(password)) {
+            return NextResponse.json({ error: "Password must contain a number" }, { status: 400 });
+        }
+
+        // Email format validation
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
         }
 
         const exists = await db.user.findUnique({ where: { email } });
@@ -15,9 +31,10 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Email already registered" }, { status: 409 });
         }
 
-        // Create a new org for each signup so accounts are isolated
+        // Create a new org for each signup — use firmName if provided
+        const orgName = firmName?.trim() || `${name}'s Firm`;
         const org = await db.organization.create({
-            data: { name: `${name}'s Firm` },
+            data: { name: orgName },
         });
 
         const user = await db.user.create({

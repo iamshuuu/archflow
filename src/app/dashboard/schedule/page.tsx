@@ -5,7 +5,7 @@ import { trpc } from "@/app/providers";
 import GanttChart, { GanttProject } from "@/app/components/GanttChart";
 import { Calendar, ZoomIn, ZoomOut, Loader2 } from "lucide-react";
 
-type ZoomLevel = "month" | "quarter" | "year";
+type ZoomLevel = "day" | "week" | "month" | "quarter" | "year";
 
 export default function SchedulePage() {
     const { data: rawProjects = [], isLoading } = trpc.project.schedule.useQuery();
@@ -47,7 +47,7 @@ export default function SchedulePage() {
         utils.project.schedule.invalidate();
     };
 
-    const zoomOrder: ZoomLevel[] = ["year", "quarter", "month"];
+    const zoomOrder: ZoomLevel[] = ["year", "quarter", "month", "week", "day"];
     const zoomIn = () => { const idx = zoomOrder.indexOf(zoom); if (idx < zoomOrder.length - 1) setZoom(zoomOrder[idx + 1]); };
     const zoomOut = () => { const idx = zoomOrder.indexOf(zoom); if (idx > 0) setZoom(zoomOrder[idx - 1]); };
 
@@ -97,14 +97,14 @@ export default function SchedulePage() {
                     </span>
                     <button
                         onClick={zoomIn}
-                        disabled={zoom === "month"}
+                        disabled={zoom === "day"}
                         style={{
                             width: "32px", height: "32px", borderRadius: "6px",
                             border: "1px solid var(--border-primary)", background: "var(--bg-card)",
-                            cursor: zoom === "month" ? "not-allowed" : "pointer",
+                            cursor: zoom === "day" ? "not-allowed" : "pointer",
                             display: "flex", alignItems: "center", justifyContent: "center",
-                            color: zoom === "month" ? "var(--border-secondary)" : "var(--text-muted)",
-                            opacity: zoom === "month" ? 0.5 : 1,
+                            color: zoom === "day" ? "var(--border-secondary)" : "var(--text-muted)",
+                            opacity: zoom === "day" ? 0.5 : 1,
                         }}
                     >
                         <ZoomIn size={14} />
