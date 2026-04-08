@@ -272,16 +272,6 @@ npx prisma db seed
 npm run dev
 ```
 
-### Demo Account
-
-After seeding, you can log in with:
-
-| Field | Value |
-|-------|-------|
-| **Email** | `karan@archflow.io` |
-| **Password** | `password123` |
-
-The demo account comes pre-loaded with 5 projects, 3 team members, invoices, time entries, and phases — so you can explore all features immediately.
 
 ### Create a Fresh Account
 
