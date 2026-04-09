@@ -1,12 +1,14 @@
 "use client";
 import { trpc } from "@/app/providers";
 import { DollarSign, CheckCircle2, Clock, AlertCircle, TrendingUp, Loader2 } from "lucide-react";
-import { formatCurrency, cardStyle } from "./InvoiceStyles";
+import { cardStyle } from "./InvoiceStyles";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 export default function OverviewTab() {
     const { data: invoices = [], isLoading } = trpc.invoice.list.useQuery();
     const { data: arData } = trpc.invoice.arAging.useQuery();
     const { data: payments = [] } = trpc.invoice.listPayments.useQuery();
+    const { formatCurrency } = useCurrencyFormatter();
 
     if (isLoading) return <div style={{ padding: "60px", textAlign: "center" }}><Loader2 size={20} style={{ color: "var(--text-muted)", animation: "spin 1s linear infinite" }} /></div>;
 

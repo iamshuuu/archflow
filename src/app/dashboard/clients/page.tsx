@@ -26,6 +26,7 @@ import {
     Loader2,
 } from "lucide-react";
 import { trpc } from "@/app/providers";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 const clientStatusConfig: Record<string, { label: string; color: string; bg: string }> = {
     active: { label: "Active", color: "var(--success)", bg: "rgba(90,122,70,0.08)" },
@@ -40,9 +41,6 @@ const proposalStatusConfig: Record<string, { label: string; color: string; bg: s
     declined: { label: "Declined", color: "var(--danger)", bg: "rgba(176,80,64,0.08)", icon: XCircle },
 };
 
-const formatCurrency = (v: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(v);
-
 export default function ClientsPage() {
     const [pageTab, setPageTab] = useState<"clients" | "consultants">("clients");
     const [search, setSearch] = useState("");
@@ -51,6 +49,7 @@ export default function ClientsPage() {
     const [showNewClient, setShowNewClient] = useState(false);
     const [showNewProposal, setShowNewProposal] = useState(false);
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
+    const { formatCurrency } = useCurrencyFormatter();
 
     const utils = trpc.useUtils();
     const { data: rawClients = [], isLoading } = trpc.clients.list.useQuery();

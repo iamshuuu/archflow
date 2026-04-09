@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { trpc } from "@/app/providers";
 import { Plus, Loader2, X, Users } from "lucide-react";
-import { formatCurrency, cardStyle, tableWrapStyle, thStyle, tdStyle, modalOverlay, modalBox, labelStyle, inputStyle, btnPrimary, btnSecondary, badgeStyle } from "./InvoiceStyles";
+import { cardStyle, tableWrapStyle, thStyle, tdStyle, modalOverlay, modalBox, labelStyle, inputStyle, btnPrimary, btnSecondary, badgeStyle } from "./InvoiceStyles";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 const statusColors: Record<string, [string, string]> = {
     pending: ["var(--warning)", "rgba(209,163,67,0.08)"],
@@ -18,6 +19,7 @@ export default function ConsultantBillsTab() {
     const { data: summary } = trpc.consultant.billSummary.useQuery();
     const createBill = trpc.consultant.createBill.useMutation({ onSuccess: () => utils.consultant.invalidate() });
     const updateStatus = trpc.consultant.updateBillStatus.useMutation({ onSuccess: () => utils.consultant.invalidate() });
+    const { formatCurrency } = useCurrencyFormatter();
 
     const [showAdd, setShowAdd] = useState(false);
     const [form, setForm] = useState({ consultantId: "", projectId: "", amount: "", date: new Date().toISOString().slice(0, 10), description: "", invoiceRef: "" });

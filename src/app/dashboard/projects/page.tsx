@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -19,6 +19,7 @@ import {
     Trash2,
 } from "lucide-react";
 import { trpc } from "@/app/providers";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 type ProjectStatus = "active" | "pipeline" | "on-hold" | "completed" | "archived";
 
@@ -36,10 +37,7 @@ const pipelineStages = [
     { key: "negotiation", label: "Negotiation", color: "var(--warning)" },
     { key: "won", label: "Won", color: "var(--success)" },
     { key: "lost", label: "Lost", color: "var(--danger)" },
-];
-
-const formatCurrency = (v: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(v);
+] as const;
 
 export default function ProjectsPage() {
     const [viewMode, setViewMode] = useState<"list" | "grid" | "pipeline">("list");
@@ -57,6 +55,7 @@ export default function ProjectsPage() {
     const utils = trpc.useUtils();
     const router = useRouter();
     const { data: rawProjects = [], isLoading } = trpc.project.list.useQuery();
+    const { formatCurrency } = useCurrencyFormatter();
     const updateStage = trpc.project.updatePipelineStage.useMutation({
         onSuccess: () => utils.project.list.invalidate(),
     });
@@ -67,22 +66,34 @@ export default function ProjectsPage() {
         onSuccess: () => utils.project.list.invalidate(),
     });
 
-    const projects = rawProjects.map((p: any) => ({
-        id: p.id,
-        name: p.name,
-        client: p.client?.name || "Unknown",
-        type: p.type || "Commercial",
-        status: (p.status || "active") as ProjectStatus,
-        phase: p.phases?.[0]?.name || p.phase || "—",
-        progress: p.progress ?? 0,
-        budgetUsed: p.budgetUsed ?? 0,
-        contractValue: p.contractValue ?? 0,
-        startDate: p.startDate || "",
-        endDate: p.endDate || "",
-        pipelineStage: (p as any).pipelineStage || "lead",
-    }));
+    const projects = rawProjects.map((p: any) => {
+        const phases = Array.isArray(p.phases) ? p.phases : [];
+        const totalBudgetHours = phases.reduce((sum: number, ph: any) => sum + (ph?.budgetHours || 0), 0);
+        const totalUsedHours = phases.reduce((sum: number, ph: any) => {
+            const used = (ph?.timeEntries || []).reduce((phaseSum: number, te: any) => phaseSum + (te?.hours || 0), 0);
+            return sum + used;
+        }, 0);
+        const usagePct = totalBudgetHours > 0 ? Math.round((totalUsedHours / totalBudgetHours) * 100) : 0;
+
+        return {
+            id: p.id,
+            name: p.name,
+            client: p.client?.name || "Unknown",
+            type: p.type || "Commercial",
+            status: (p.status || "active") as ProjectStatus,
+            phase: p.phases?.[0]?.name || p.phase || "—",
+            progress: totalBudgetHours > 0 ? Math.max(0, Math.min(100, usagePct)) : (p.progress ?? 0),
+            budgetUsed: usagePct,
+            contractValue: p.contractValue ?? 0,
+            startDate: p.startDate || "",
+            endDate: p.endDate || "",
+            pipelineStage: (p as any).pipelineStage || "lead",
+        };
+    });
 
     const allTypes = Array.from(new Set(projects.map((p: any) => p.type)));
+    const allClients = Array.from(new Set(projects.map((p: any) => p.client))).sort((a, b) => a.localeCompare(b));
+    const activeFilterCount = filterTypes.length + (filterClient ? 1 : 0);
     const toggleType = (t: string) => setFilterTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]);
 
     const filtered = projects.filter((p: any) => {
@@ -116,7 +127,7 @@ export default function ProjectsPage() {
                 <div>
                     <h1 style={{ fontSize: "24px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Projects</h1>
                     <p style={{ marginTop: "4px", fontSize: "14px", color: "var(--text-tertiary)", fontWeight: 300 }}>
-                        {projects.length} projects · {statusCounts.active} active
+                        {projects.length} projects Â· {statusCounts.active} active
                     </p>
                 </div>
                 <div style={{ display: "flex", gap: "8px" }}>
@@ -166,8 +177,8 @@ export default function ProjectsPage() {
                     </div>
                     <div style={{ position: "relative" }}>
                         <button onClick={() => setShowFilter(!showFilter)}
-                            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${showFilter || filterTypes.length > 0 ? "var(--accent-primary)" : "var(--border-primary)"}`, background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: showFilter || filterTypes.length > 0 ? "var(--accent-primary)" : "var(--text-tertiary)", transition: "all 0.15s" }}>
-                            <Filter size={13} /> Filter {filterTypes.length > 0 && <span style={{ fontSize: "9px", background: "var(--accent-primary)", color: "white", borderRadius: "50%", width: "16px", height: "16px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600 }}>{filterTypes.length}</span>}
+                            style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${showFilter || activeFilterCount > 0 ? "var(--accent-primary)" : "var(--border-primary)"}`, background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: showFilter || activeFilterCount > 0 ? "var(--accent-primary)" : "var(--text-tertiary)", transition: "all 0.15s" }}>
+                            <Filter size={13} /> Filter {activeFilterCount > 0 && <span style={{ fontSize: "9px", background: "var(--accent-primary)", color: "white", borderRadius: "50%", width: "16px", height: "16px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600 }}>{activeFilterCount}</span>}
                         </button>
                         {showFilter && (
                             <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 50, minWidth: "200px", background: "var(--bg-card)", borderRadius: "8px", border: "1px solid var(--border-secondary)", boxShadow: "0 8px 24px rgba(0,0,0,0.1)", padding: "10px" }}>
@@ -180,8 +191,19 @@ export default function ProjectsPage() {
                                         {t}
                                     </label>
                                 ))}
-                                {filterTypes.length > 0 && (
-                                    <button onClick={() => setFilterTypes([])} style={{ marginTop: "6px", width: "100%", padding: "6px", borderRadius: "4px", border: "none", background: "var(--bg-secondary)", fontSize: "11px", color: "var(--text-muted)", cursor: "pointer" }}>Clear filters</button>
+                                <div style={{ marginTop: "10px", borderTop: "1px solid var(--border-primary)", paddingTop: "10px" }}>
+                                    <p style={{ fontSize: "9px", fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px", padding: "0 4px" }}>Client</p>
+                                    <select
+                                        value={filterClient}
+                                        onChange={(e) => setFilterClient(e.target.value)}
+                                        style={{ width: "100%", padding: "7px 8px", borderRadius: "4px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-secondary)", fontFamily: "inherit", cursor: "pointer" }}
+                                    >
+                                        <option value="">All clients</option>
+                                        {allClients.map((client) => <option key={client} value={client}>{client}</option>)}
+                                    </select>
+                                </div>
+                                {activeFilterCount > 0 && (
+                                    <button onClick={() => { setFilterTypes([]); setFilterClient(""); }} style={{ marginTop: "8px", width: "100%", padding: "6px", borderRadius: "4px", border: "none", background: "var(--bg-secondary)", fontSize: "11px", color: "var(--text-muted)", cursor: "pointer" }}>Clear filters</button>
                                 )}
                             </div>
                         )}
@@ -299,7 +321,7 @@ export default function ProjectsPage() {
                                         </div>
                                         <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                                             <Calendar size={12} style={{ color: "var(--text-muted)" }} />
-                                            <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{proj.endDate || "—"}</span>
+                                            <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{proj.endDate || "â€”"}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -381,7 +403,7 @@ export default function ProjectsPage() {
                                         <Users size={14} style={{ color: "var(--accent-primary)" }} />
                                         <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{client}</span>
                                     </div>
-                                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{projs.length} project{projs.length > 1 ? "s" : ""} · {formatCurrency(projs.reduce((s: number, p: any) => s + p.contractValue, 0))}</span>
+                                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{projs.length} project{projs.length > 1 ? "s" : ""} Â· {formatCurrency(projs.reduce((s: number, p: any) => s + p.contractValue, 0))}</span>
                                 </div>
                                 {projs.map((proj: any) => {
                                     const sc = statusConfig[proj.status as ProjectStatus] || statusConfig.active;
@@ -452,7 +474,7 @@ export default function ProjectsPage() {
     );
 }
 
-/* ─── New Project Modal ─── */
+/* â”€â”€â”€ New Project Modal â”€â”€â”€ */
 
 function NewProjectModal({ onClose }: { onClose: () => void }) {
     const [form, setForm] = useState({ name: "", clientId: "", type: "Commercial", contractValue: "", startDate: "", endDate: "", description: "" });
@@ -487,7 +509,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                     </div>
                     <div>
                         <label style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "6px" }}>Contract Value</label>
-                        <input type="text" value={form.contractValue} onChange={(e) => up("contractValue", e.target.value)} placeholder="$0" style={inputStyle} onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }} onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
+                        <input type="text" value={form.contractValue} onChange={(e) => up("contractValue", e.target.value)} placeholder="0.00" style={inputStyle} onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }} onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                         <div><label style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "6px" }}>Start Date</label><input type="date" value={form.startDate} onChange={(e) => up("startDate", e.target.value)} style={inputStyle} /></div>
@@ -503,7 +525,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
     );
 }
 
-/* ─── Create From Template Modal ─── */
+/* â”€â”€â”€ Create From Template Modal â”€â”€â”€ */
 
 function CreateFromTemplateModal({ onClose }: { onClose: () => void }) {
     const [selectedTemplate, setSelectedTemplate] = useState("");
@@ -529,7 +551,7 @@ function CreateFromTemplateModal({ onClose }: { onClose: () => void }) {
                         <label style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "6px" }}>Template *</label>
                         <select value={selectedTemplate} onChange={(e) => setSelectedTemplate(e.target.value)} required style={{ ...inputStyle, cursor: "pointer" }}>
                             <option value="">Select a template...</option>
-                            {(templates as any[]).map((t: any) => <option key={t.id} value={t.id}>{t.name} — {t.defaultType}</option>)}
+                            {(templates as any[]).map((t: any) => <option key={t.id} value={t.id}>{t.name} â€” {t.defaultType}</option>)}
                         </select>
                         {selectedTpl && (
                             <div style={{ marginTop: "8px", padding: "10px", borderRadius: "6px", background: "var(--bg-warm)", fontSize: "11px", color: "var(--text-muted)" }}>
@@ -549,7 +571,7 @@ function CreateFromTemplateModal({ onClose }: { onClose: () => void }) {
                         </div>
                         <div>
                             <label style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "6px" }}>Contract Value</label>
-                            <input type="text" value={form.contractValue} onChange={(e) => up("contractValue", e.target.value)} placeholder="$0" style={inputStyle} />
+                            <input type="text" value={form.contractValue} onChange={(e) => up("contractValue", e.target.value)} placeholder="0.00" style={inputStyle} />
                         </div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
@@ -566,7 +588,7 @@ function CreateFromTemplateModal({ onClose }: { onClose: () => void }) {
     );
 }
 
-/* ─── Template Manager Modal ─── */
+/* â”€â”€â”€ Template Manager Modal â”€â”€â”€ */
 
 function TemplateManagerModal({ onClose }: { onClose: () => void }) {
     const [newName, setNewName] = useState("");
@@ -598,7 +620,7 @@ function TemplateManagerModal({ onClose }: { onClose: () => void }) {
                                     <div key={t.id} style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                         <div>
                                             <p style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{t.name}</p>
-                                            <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>{t.description || "No description"} · {t.defaultType} · {phases.length} phases</p>
+                                            <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>{t.description || "No description"} Â· {t.defaultType} Â· {phases.length} phases</p>
                                             {phases.length > 0 && <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>Phases: {phases.join(", ")}</p>}
                                         </div>
                                         <button onClick={() => deleteTemplate.mutate({ id: t.id })} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", padding: "4px" }}><Trash2 size={14} /></button>

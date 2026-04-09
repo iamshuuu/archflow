@@ -11,7 +11,8 @@ import UnbilledTab from "./UnbilledTab";
 import ARAgingTab from "./ARAgingTab";
 import PaymentsTab from "./PaymentsTab";
 import ConsultantBillsTab from "./ConsultantBillsTab";
-import { formatCurrency, labelStyle, inputStyle, modalOverlay, modalBox, btnPrimary, btnSecondary } from "./InvoiceStyles";
+import { labelStyle, inputStyle, modalOverlay, modalBox, btnPrimary, btnSecondary } from "./InvoiceStyles";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 type InvoiceStatus = "draft" | "sent" | "viewed" | "paid" | "overdue";
 interface LineItem { description: string; qty: number; rate: number }
@@ -44,6 +45,7 @@ const paymentTermsOptions = [
 
 export default function InvoicesPage() {
     const utils = trpc.useUtils();
+    const { formatCurrency } = useCurrencyFormatter();
     const { data: rawInvoices = [], isLoading } = trpc.invoice.list.useQuery();
     const { data: projects = [] } = trpc.project.list.useQuery();
     const { data: template } = trpc.invoice.getTemplate.useQuery();

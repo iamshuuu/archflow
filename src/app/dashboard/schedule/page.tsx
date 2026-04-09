@@ -129,11 +129,14 @@ export default function SchedulePage() {
 
             {/* Gantt */}
             {projectsWithDates.length > 0 ? (
-                <GanttChart
-                    projects={projectsWithDates}
-                    onPhaseUpdate={handlePhaseUpdate}
-                    zoomLevel={zoom}
-                />
+                <div style={{ width: "100%", maxWidth: "100%", minWidth: 0 }}>
+                    <GanttChart
+                        projects={projectsWithDates}
+                        onPhaseUpdate={handlePhaseUpdate}
+                        zoomLevel={zoom}
+                        onZoomChange={setZoom}
+                    />
+                </div>
             ) : (
                 <div style={{ padding: "60px", textAlign: "center", borderRadius: "10px", border: "1px solid var(--border-primary)", background: "var(--bg-card)" }}>
                     <Calendar size={32} style={{ color: "var(--text-muted)", opacity: 0.4, marginBottom: "12px" }} />

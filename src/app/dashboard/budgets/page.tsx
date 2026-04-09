@@ -12,6 +12,7 @@ import {
     Clock,
     Target,
 } from "lucide-react";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 /* ─── Types ─── */
 
@@ -37,8 +38,6 @@ interface ProjectBudget {
     endDate: string;
     phases: PhaseBudget[];
 }
-
-const formatCurrency = (v: number) => `$${v.toLocaleString()}`;
 
 const statusStyles: Record<string, { color: string; bg: string; label: string }> = {
     "on-track": { color: "var(--success)", bg: "rgba(90,122,70,0.08)", label: "On Track" },
@@ -96,6 +95,7 @@ function PhaseBurnBar({ phBurn }: { phBurn: number }) {
 
 export default function BudgetsPage() {
     const { data: rawProjects = [], isLoading } = trpc.project.budgets.useQuery();
+    const { formatCurrency } = useCurrencyFormatter();
     const [expanded, setExpanded] = useState<string | null>(null);
 
     // Adapt DB data to budget view shape

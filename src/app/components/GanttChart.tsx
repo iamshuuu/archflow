@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { Diamond, GripVertical } from "lucide-react";
 
 /* ─── Types ─── */
@@ -35,6 +35,7 @@ interface GanttChartProps {
     projects: GanttProject[];
     onPhaseUpdate?: (phaseId: string, startDate: string, endDate: string) => void;
     zoomLevel?: "day" | "week" | "month" | "quarter" | "year";
+    onZoomChange?: (zoomLevel: "day" | "week" | "month" | "quarter" | "year") => void;
 }
 
 /* ─── Helpers ─── */
@@ -67,15 +68,28 @@ const DEFAULT_COLORS = [
 
 /* ─── Component ─── */
 
-export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: initialZoom = "month" }: GanttChartProps) {
+export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: controlledZoomLevel, onZoomChange }: GanttChartProps) {
     const svgRef = useRef<SVGSVGElement>(null);
+    const scrollAreaRef = useRef<HTMLDivElement>(null);
     const [hoveredPhase, setHoveredPhase] = useState<string | null>(null);
     const [dragState, setDragState] = useState<{
         phaseId: string; mode: "move" | "resize-end"; startX: number;
         origStart: string; origEnd: string;
     } | null>(null);
+    const [dragPreview, setDragPreview] = useState<{ phaseId: string; startDate: string; endDate: string } | null>(null);
     const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
-    const [zoomLevel, setZoomLevel] = useState<"day" | "week" | "month" | "quarter" | "year">(initialZoom);
+    const [uncontrolledZoomLevel, setUncontrolledZoomLevel] = useState<"day" | "week" | "month" | "quarter" | "year">(controlledZoomLevel ?? "month");
+    const [scrollLeft, setScrollLeft] = useState(0);
+    const [maxScrollLeft, setMaxScrollLeft] = useState(0);
+    const isControlled = typeof onZoomChange === "function";
+    const zoomLevel = isControlled ? (controlledZoomLevel ?? uncontrolledZoomLevel) : uncontrolledZoomLevel;
+
+    const setZoomLevel = useCallback((nextZoom: "day" | "week" | "month" | "quarter" | "year") => {
+        if (!isControlled) {
+            setUncontrolledZoomLevel(nextZoom);
+        }
+        onZoomChange?.(nextZoom);
+    }, [isControlled, onZoomChange]);
 
     // Compute time range
     const { rangeStart, rangeEnd, totalDays, allPhases } = useMemo(() => {
@@ -135,6 +149,47 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: initial
     }, [projects, allPhases]);
 
     const totalHeight = HEADER_HEIGHT + rows.length * ROW_HEIGHT + 8;
+
+    const updateScrollMetrics = useCallback(() => {
+        const el = scrollAreaRef.current;
+        if (!el) return;
+        const max = Math.max(0, el.scrollWidth - el.clientWidth);
+        setMaxScrollLeft(max);
+        setScrollLeft(Math.min(el.scrollLeft, max));
+    }, []);
+
+    useEffect(() => {
+        updateScrollMetrics();
+        const el = scrollAreaRef.current;
+        if (!el || typeof ResizeObserver === "undefined") return;
+        const observer = new ResizeObserver(() => updateScrollMetrics());
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [updateScrollMetrics, totalWidth, totalHeight, zoomLevel]);
+
+    const handleHorizontalWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+        const el = scrollAreaRef.current;
+        if (!el) return;
+        const horizontalDelta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        if (horizontalDelta === 0) return;
+        const before = el.scrollLeft;
+        el.scrollLeft += horizontalDelta;
+        if (el.scrollLeft !== before) {
+            e.preventDefault();
+            setScrollLeft(el.scrollLeft);
+        }
+    }, []);
+
+    const handleSliderWheel = useCallback((e: React.WheelEvent<HTMLInputElement>) => {
+        const el = scrollAreaRef.current;
+        if (!el || maxScrollLeft <= 0) return;
+        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        if (delta === 0) return;
+        e.preventDefault();
+        const next = Math.max(0, Math.min(maxScrollLeft, el.scrollLeft + delta));
+        el.scrollLeft = next;
+        setScrollLeft(next);
+    }, [maxScrollLeft]);
 
     // Generate column headers based on zoom level
     const columnHeaders = useMemo(() => {
@@ -206,27 +261,42 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: initial
     }, []);
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
-        if (!dragState || !onPhaseUpdate) return;
+        if (!dragState) return;
         const dx = e.clientX - dragState.startX;
         const daysDelta = Math.round(dx / dayWidth);
-        if (daysDelta === 0) return;
+        if (daysDelta === 0) {
+            setDragPreview(null);
+            return;
+        }
 
         const origS = parseDate(dragState.origStart);
         const origE = parseDate(dragState.origEnd);
 
         if (dragState.mode === "move") {
-            onPhaseUpdate(dragState.phaseId, formatDate(addDays(origS, daysDelta)), formatDate(addDays(origE, daysDelta)));
+            setDragPreview({
+                phaseId: dragState.phaseId,
+                startDate: formatDate(addDays(origS, daysDelta)),
+                endDate: formatDate(addDays(origE, daysDelta)),
+            });
         } else {
             const newEnd = addDays(origE, daysDelta);
             if (newEnd > origS) {
-                onPhaseUpdate(dragState.phaseId, dragState.origStart, formatDate(newEnd));
+                setDragPreview({
+                    phaseId: dragState.phaseId,
+                    startDate: dragState.origStart,
+                    endDate: formatDate(newEnd),
+                });
             }
         }
-    }, [dragState, dayWidth, onPhaseUpdate]);
+    }, [dragState, dayWidth]);
 
     const handleMouseUp = useCallback(() => {
+        if (dragState && dragPreview && onPhaseUpdate) {
+            onPhaseUpdate(dragPreview.phaseId, dragPreview.startDate, dragPreview.endDate);
+        }
         setDragState(null);
-    }, []);
+        setDragPreview(null);
+    }, [dragState, dragPreview, onPhaseUpdate]);
 
     if (allPhases.length === 0) {
         return (
@@ -246,13 +316,27 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: initial
     ];
 
     return (
-        <div style={{ borderRadius: "10px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", overflow: "hidden" }}>
+        <div
+            style={{
+                borderRadius: "10px",
+                border: "1px solid var(--border-primary)",
+                background: "var(--bg-card)",
+                overflow: "hidden",
+                width: "100%",
+                maxWidth: "100%",
+                minWidth: 0,
+                display: "flex",
+                flexDirection: "column",
+                contain: "inline-size",
+            }}
+        >
             {/* Zoom toolbar — stays fixed */}
             <div style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
                 padding: "10px 16px", borderBottom: "1px solid var(--border-primary)",
                 background: "var(--bg-warm)",
                 position: "sticky", top: 0, zIndex: 10,
+                width: "100%", maxWidth: "100%",
             }}>
                 <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>
                     Timeline
@@ -280,11 +364,14 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: initial
 
             {/* Scrollable chart area */}
             <div
+                ref={scrollAreaRef}
                 className="gantt-scroll-area"
-                style={{ width: "100%", overflowX: "auto", overflowY: "hidden" }}
+                style={{ width: "100%", maxWidth: "100%", minWidth: 0, overflowX: "auto", overflowY: "hidden", flex: "1 1 auto" }}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
+                onScroll={updateScrollMetrics}
+                onWheel={handleHorizontalWheel}
             >
             <style>{`
                 .gantt-scroll-area::-webkit-scrollbar { height: 10px; }
@@ -363,8 +450,11 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: initial
 
                         // Phase row
                         const phase = row.phase!;
-                        const barX = getBarX(phase.startDate);
-                        const barW = getBarWidth(phase.startDate, phase.endDate);
+                        const preview = dragPreview?.phaseId === phase.id ? dragPreview : null;
+                        const phaseStartDate = preview?.startDate || phase.startDate;
+                        const phaseEndDate = preview?.endDate || phase.endDate;
+                        const barX = getBarX(phaseStartDate);
+                        const barW = getBarWidth(phaseStartDate, phaseEndDate);
                         const barY = y + 10;
                         const barH = 20;
                         const color = phase.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
@@ -476,6 +566,27 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: initial
                         </g>
                     )}
                 </svg>
+            </div>
+
+            <div style={{ padding: "8px 14px 10px", borderTop: "1px solid var(--border-primary)", background: "var(--bg-secondary)" }}>
+                <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, maxScrollLeft)}
+                    value={Math.min(scrollLeft, maxScrollLeft)}
+                    step={Math.max(1, dayWidth)}
+                    onChange={(e) => {
+                        const next = Number(e.target.value);
+                        const el = scrollAreaRef.current;
+                        if (!el) return;
+                        el.scrollLeft = next;
+                        setScrollLeft(next);
+                    }}
+                    onWheel={handleSliderWheel}
+                    disabled={maxScrollLeft <= 0}
+                    style={{ width: "100%", cursor: maxScrollLeft > 0 ? "pointer" : "default", accentColor: "var(--accent-primary)", opacity: maxScrollLeft > 0 ? 1 : 0.45 }}
+                    aria-label="Scroll timeline horizontally"
+                />
             </div>
         </div>
     );

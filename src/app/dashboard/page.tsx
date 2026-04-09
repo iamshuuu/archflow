@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { trpc } from "@/app/providers";
 import { useSession } from "next-auth/react";
+import { useCurrencyFormatter } from "./useCurrencyFormatter";
 
 export default function DashboardPage() {
     const { data: session } = useSession();
@@ -32,6 +33,7 @@ export default function DashboardPage() {
     const { data: rawInvoices = [] } = trpc.invoice.list.useQuery();
     const { data: rawTime = [] } = trpc.time.list.useQuery();
     const { data: rawClients = [] } = trpc.clients.list.useQuery();
+    const { formatCompactCurrency } = useCurrencyFormatter();
 
     const [onboardingOpen, setOnboardingOpen] = useState(true);
 
@@ -40,11 +42,7 @@ export default function DashboardPage() {
     const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
     const userName = session?.user?.name?.split(" ")[0] || "there";
 
-    const fmt = (v: number) => {
-        if (Math.abs(v) >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
-        if (Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(1)}k`;
-        return `$${v.toLocaleString()}`;
-    };
+    const fmt = (v: number) => formatCompactCurrency(v, 1);
 
     // Recent projects
     const recentProjects = rawProjects.slice(0, 5).map((p: any) => ({

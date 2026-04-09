@@ -291,12 +291,32 @@ export const invoiceRouter = router({
                 accentColor: "#B07A4A", logo: "",
             };
 
+            const orgLocale = (invoice as any).org?.locale || "en-US";
+            const orgCurrency = (invoice as any).org?.currency || "USD";
+            const formatMoney = (value: number) => {
+                try {
+                    return new Intl.NumberFormat(orgLocale, {
+                        style: "currency",
+                        currency: orgCurrency,
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                    }).format(value);
+                } catch {
+                    return new Intl.NumberFormat("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                    }).format(value);
+                }
+            };
+
             const lineItemsHtml = invoice.lineItems.map((li) => `
                 <tr>
                     <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-size:13px;color:#333">${li.description}</td>
                     <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-size:13px;text-align:center">${li.qty}</td>
-                    <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-size:13px;text-align:right">$${li.rate.toFixed(2)}</td>
-                    <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-size:13px;text-align:right;font-weight:600">$${(li.qty * li.rate).toFixed(2)}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-size:13px;text-align:right">${formatMoney(li.rate)}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #e5e5e5;font-size:13px;text-align:right;font-weight:600">${formatMoney(li.qty * li.rate)}</td>
                 </tr>
             `).join("");
 
@@ -351,7 +371,7 @@ ${(template as any).headerText ? `<p style="font-size:13px;color:#666;margin-bot
     <thead><tr><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
     <tbody>${lineItemsHtml}</tbody>
 </table>
-<div class="total-row">Total: $${invoice.amount.toFixed(2)}</div>
+<div class="total-row">Total: ${formatMoney(invoice.amount)}</div>
 ${invoice.notes ? `<div class="notes"><strong>Notes:</strong> ${invoice.notes}</div>` : ""}
 ${invoice.paymentUrl ? `<p style="margin-top:16px;font-size:13px">Pay online: <a href="${invoice.paymentUrl}" style="color:${(template as any).accentColor}">${invoice.paymentUrl}</a></p>` : ""}
 <div class="footer">${(template as any).footerText}</div>

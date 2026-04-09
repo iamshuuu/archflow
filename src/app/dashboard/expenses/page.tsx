@@ -22,6 +22,7 @@ import {
     Receipt,
     MapPin,
 } from "lucide-react";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 /* ─── Constants ─── */
 
@@ -43,10 +44,9 @@ const STATUS_STYLES: Record<string, { color: string; bg: string; label: string }
 
 const IRS_RATE = 0.67;
 
-const formatCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
 export default function ExpensesPage() {
     const utils = trpc.useUtils();
+    const { formatCurrency } = useCurrencyFormatter();
     const { data: expenses = [], isLoading } = trpc.expense.list.useQuery();
     const { data: summary } = trpc.expense.summary.useQuery();
     const { data: projects = [] } = trpc.project.list.useQuery();
@@ -391,7 +391,9 @@ export default function ExpensesPage() {
                             <div style={{ padding: "16px", borderRadius: "8px", background: "rgba(176,122,74,0.04)", border: "1px solid var(--border-primary)" }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                                     <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>IRS Rate (2024)</span>
-                                    <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-secondary)" }}>${IRS_RATE}/mile</span>
+                                    <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-secondary)" }}>
+                                        {formatCurrency(IRS_RATE)}/mile
+                                    </span>
                                 </div>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                     <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Reimbursement</span>

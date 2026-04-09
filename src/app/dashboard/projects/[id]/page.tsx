@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { trpc } from "@/app/providers";
@@ -31,6 +31,7 @@ import {
     X,
 } from "lucide-react";
 import GanttChart from "@/app/components/GanttChart";
+import { useCurrencyFormatter } from "../../useCurrencyFormatter";
 
 /* ─── Types ─── */
 
@@ -61,8 +62,6 @@ interface ProjectDetail {
     phases: Phase[];
 }
 
-const formatCurrency = (v: number) => `$${v.toLocaleString()}`;
-
 const phaseStatusColors: Record<string, { dot: string; text: string; bg: string }> = {
     completed: { dot: "var(--success)", text: "var(--success)", bg: "rgba(90,122,70,0.06)" },
     active: { dot: "var(--accent-primary)", text: "var(--accent-primary)", bg: "rgba(176,122,74,0.06)" },
@@ -72,10 +71,12 @@ const phaseStatusColors: Record<string, { dot: string; text: string; bg: string 
 export default function ProjectDetailPage() {
     const params = useParams();
     const projectId = params?.id as string;
+    const { formatCurrency } = useCurrencyFormatter();
     const { data: rawProject, isLoading } = trpc.project.getById.useQuery({ id: projectId }, { enabled: !!projectId });
 
     const [activePhase, setActivePhase] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<"overview" | "gantt" | "budget" | "tasks" | "deliverables" | "files" | "expenses">("overview");
+    const [ganttZoom, setGanttZoom] = useState<"day" | "week" | "month" | "quarter" | "year">("month");
     const [showNewTask, setShowNewTask] = useState(false);
     const [showEditProject, setShowEditProject] = useState(false);
     const [showAddPhase, setShowAddPhase] = useState(false);
@@ -86,6 +87,8 @@ export default function ProjectDetailPage() {
     const [newDeliverable, setNewDeliverable] = useState({ title: "", description: "", dueDate: "", phaseId: "", assigneeId: "" });
     const [editForm, setEditForm] = useState({ name: "", type: "", contractValue: "", startDate: "", endDate: "", status: "" });
     const [newTask, setNewTask] = useState({ title: "", phaseId: "", assigneeId: "", dueDate: "" });
+    const [budgetDrafts, setBudgetDrafts] = useState<Record<string, { name: string; budgetHours: string; budgetAmount: string; feeType: string; startDate: string; endDate: string }>>({});
+    const [savingBudgetPhaseId, setSavingBudgetPhaseId] = useState<string | null>(null);
 
     const utils = trpc.useUtils();
 
@@ -98,8 +101,7 @@ export default function ProjectDetailPage() {
     // Fetch tasks
     const { data: tasks = [] } = trpc.project.listTasks.useQuery({ projectId }, { enabled: !!projectId });
     const { data: teamMembers = [] } = trpc.team.list.useQuery();
-    const { data: perfData } = trpc.project.performance.useQuery({ projectId }, { enabled: !!projectId });
-    const { data: profitData } = trpc.project.profit.useQuery({ projectId }, { enabled: !!projectId });
+    const { data: budgetData } = trpc.project.budgetControl.useQuery({ projectId }, { enabled: !!projectId });
     const { data: files = [] } = trpc.project.listFiles.useQuery({ projectId }, { enabled: !!projectId });
     const { data: deliverables = [] } = trpc.project.listDeliverables.useQuery({ projectId }, { enabled: !!projectId });
 
@@ -108,6 +110,13 @@ export default function ProjectDetailPage() {
     const deleteTask = trpc.project.deleteTask.useMutation({ onSuccess: () => utils.project.listTasks.invalidate() });
     const addPhaseMut = trpc.project.addPhase.useMutation({ onSuccess: () => { utils.project.getById.invalidate(); setNewPhase({ name: "", budgetHours: "", budgetAmount: "", feeType: "hourly", startDate: "", endDate: "" }); setShowAddPhase(false); } });
     const deletePhaseMut = trpc.project.deletePhase.useMutation({ onSuccess: () => utils.project.getById.invalidate() });
+    const updatePhaseMut = trpc.project.updatePhase.useMutation({
+        onSuccess: () => {
+            utils.project.getById.invalidate();
+            utils.project.schedule.invalidate();
+            utils.project.budgetControl.invalidate();
+        },
+    });
     const updateProject = trpc.project.update.useMutation({ onSuccess: () => { utils.project.getById.invalidate(); setShowEditProject(false); } });
     const addFileMut = trpc.project.addFile.useMutation({ onSuccess: () => { utils.project.listFiles.invalidate(); setNewFile({ name: "", url: "", fileType: "other", phaseId: "" }); setShowAddFile(false); } });
     const deleteFileMut = trpc.project.deleteFile.useMutation({ onSuccess: () => utils.project.listFiles.invalidate() });
@@ -115,7 +124,7 @@ export default function ProjectDetailPage() {
     const updateDeliverableMut = trpc.project.updateDeliverable.useMutation({ onSuccess: () => utils.project.listDeliverables.invalidate() });
     const deleteDeliverableMut = trpc.project.deleteDeliverable.useMutation({ onSuccess: () => utils.project.listDeliverables.invalidate() });
 
-    const taskStatusCycle = ["todo", "in-progress", "review", "done"];
+    const taskStatusCycle = ["todo", "in-progress", "review", "done"] as const;
     const taskStatusConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
         "todo": { label: "To Do", color: "var(--text-muted)", bg: "var(--bg-secondary)", icon: <Circle size={12} /> },
         "in-progress": { label: "In Progress", color: "var(--info)", bg: "rgba(90,122,144,0.08)", icon: <CircleDot size={12} /> },
@@ -137,7 +146,7 @@ export default function ProjectDetailPage() {
         team: [],
         phases: ((rawProject as any).phases || []).map((p: any, i: number, arr: any[]) => {
             const totalHours = (p.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
-            const budgetHours = p.budgetHours || 100;
+            const budgetHours = p.budgetHours || 0;
             const progress = budgetHours > 0 ? Math.min(100, Math.round((totalHours / budgetHours) * 100)) : 0;
             const isComplete = progress >= 100;
             return {
@@ -145,16 +154,17 @@ export default function ProjectDetailPage() {
                 name: p.name,
                 status: isComplete ? "completed" as const : (i === 0 || arr.slice(0, i).every((prev: any) => {
                     const prevHrs = (prev.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
-                    return prevHrs >= (prev.budgetHours || 100);
+                    const prevBudget = prev.budgetHours || 0;
+                    return prevBudget > 0 ? prevHrs >= prevBudget : true;
                 })) ? "active" as const : "upcoming" as const,
                 progress,
                 budgetHours,
                 usedHours: totalHours,
-                fee: p.fee || Math.round((rawProject as any).contractValue / Math.max(arr.length, 1)),
+                fee: typeof p.budgetAmount === "number" ? p.budgetAmount : 0,
                 startDate: p.startDate || "—",
                 endDate: p.endDate || "—",
                 milestones: (p.milestones || []).map((ms: any) => ({
-                    id: ms.id || `ms-${Math.random().toString(36).slice(2)}`,
+                    id: ms.id || `${p.id}-ms-${ms.name || "milestone"}-${ms.date || "date"}`,
                     name: ms.name,
                     done: ms.done,
                     date: ms.date,
@@ -162,6 +172,25 @@ export default function ProjectDetailPage() {
             };
         }),
     } : null;
+
+    useEffect(() => {
+        if (!budgetData?.phases) return;
+        setBudgetDrafts(
+            Object.fromEntries(
+                budgetData.phases.map((phase: any) => [
+                    phase.id,
+                    {
+                        name: phase.name || "",
+                        budgetHours: String(phase.budgetHours ?? 0),
+                        budgetAmount: String(phase.budgetAmount ?? 0),
+                        feeType: phase.feeType || "hourly",
+                        startDate: phase.startDate || "",
+                        endDate: phase.endDate || "",
+                    },
+                ]),
+            ),
+        );
+    }, [budgetData]);
 
     if (isLoading) {
         return (
@@ -187,7 +216,103 @@ export default function ProjectDetailPage() {
     const totalBudgetHours = project.phases.reduce((s, p) => s + p.budgetHours, 0);
     const totalUsedHours = project.phases.reduce((s, p) => s + p.usedHours, 0);
     const totalFee = project.phases.reduce((s, p) => s + p.fee, 0);
-    const overallProgress = project.phases.length > 0 ? Math.round(project.phases.reduce((s, p) => s + p.progress, 0) / project.phases.length) : 0;
+    const overallProgress = totalBudgetHours > 0
+        ? Math.max(0, Math.min(100, Math.round((totalUsedHours / totalBudgetHours) * 100)))
+        : (project.phases.length > 0 ? Math.round(project.phases.reduce((s, p) => s + p.progress, 0) / project.phases.length) : 0);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const sevenDaysIso = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const taskRows = tasks as any[];
+    const deliverableRows = deliverables as any[];
+    const overdueTasks = taskRows.filter((t) => t.status !== "done" && t.dueDate && t.dueDate < todayIso).length;
+    const dueSoonTasks = taskRows.filter((t) => t.status !== "done" && t.dueDate && t.dueDate >= todayIso && t.dueDate <= sevenDaysIso).length;
+    const unassignedTasks = taskRows.filter((t) => t.status !== "done" && !t.assigneeId).length;
+    const overdueDeliverables = deliverableRows.filter((d) => !["completed", "approved"].includes(d.status) && d.dueDate && d.dueDate < todayIso).length;
+    const dueSoonDeliverables = deliverableRows.filter((d) => !["completed", "approved"].includes(d.status) && d.dueDate && d.dueDate >= todayIso && d.dueDate <= sevenDaysIso).length;
+    const upcomingMilestones = project.phases
+        .flatMap((ph) => ph.milestones)
+        .filter((ms) => !ms.done && ms.date && ms.date >= todayIso && ms.date <= sevenDaysIso).length;
+    const budgetSummary = budgetData?.summary;
+    const budgetFinances = budgetData?.finances;
+    const budgetForecast = budgetData?.forecast;
+    const budgetPhases = (budgetData?.phases ?? []) as any[];
+    const budgetBurn = budgetSummary?.overallBurn ?? overallProgress;
+    const scheduleVariance = budgetSummary?.scheduleVariance ?? 0;
+    const cashCollectedPct = project.contractValue > 0 && budgetFinances ? Math.round((budgetFinances.collectedAmount / project.contractValue) * 100) : 0;
+    const budgetRisk: "low" | "medium" | "high" = budgetBurn > 100 ? "high" : budgetBurn > 85 ? "medium" : "low";
+    const scheduleRisk: "low" | "medium" | "high" = scheduleVariance < -15 ? "high" : scheduleVariance < -5 ? "medium" : "low";
+    const workRisk: "low" | "medium" | "high" = (overdueTasks + overdueDeliverables) > 4 ? "high" : (overdueTasks + overdueDeliverables) > 0 ? "medium" : "low";
+    const cashRisk: "low" | "medium" | "high" = cashCollectedPct < 30 ? "high" : cashCollectedPct < 60 ? "medium" : "low";
+    const budgetAlerts = [
+        budgetSummary && budgetSummary.overBudgetPhaseCount > 0 ? { tone: "danger", text: `${budgetSummary.overBudgetPhaseCount} phase${budgetSummary.overBudgetPhaseCount > 1 ? "s are" : " is"} over budget.` } : null,
+        budgetSummary && budgetSummary.atRiskPhaseCount > 0 ? { tone: "warning", text: `${budgetSummary.atRiskPhaseCount} phase${budgetSummary.atRiskPhaseCount > 1 ? "s are" : " is"} trending at risk.` } : null,
+        budgetSummary && budgetSummary.unallocatedContract > 0 ? { tone: "info", text: `${formatCurrency(budgetSummary.unallocatedContract)} is still unallocated from the contract.` } : null,
+        budgetSummary && budgetSummary.unallocatedContract < 0 ? { tone: "danger", text: `Phase budgets exceed the contract by ${formatCurrency(Math.abs(budgetSummary.unallocatedContract))}.` } : null,
+        budgetFinances && budgetFinances.overdueAmount > 0 ? { tone: "danger", text: `${formatCurrency(budgetFinances.overdueAmount)} is overdue and needs collection follow-up.` } : null,
+        budgetForecast && budgetForecast.projectedOverallBurn > 100 ? { tone: "warning", text: `Current pace projects ${budgetForecast.projectedOverallBurn}% total budget burn by completion.` } : null,
+    ].filter(Boolean) as { tone: "danger" | "warning" | "info"; text: string }[];
+    const riskBadge = (label: string, level: "low" | "medium" | "high") => {
+        const color = level === "high" ? "var(--danger)" : level === "medium" ? "var(--warning)" : "var(--success)";
+        const bg = level === "high" ? "rgba(176,80,64,0.08)" : level === "medium" ? "rgba(176,138,48,0.08)" : "rgba(90,122,70,0.08)";
+        return <span key={label} style={{ fontSize: "10px", fontWeight: 600, color, background: bg, padding: "4px 8px", borderRadius: "999px", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}: {level}</span>;
+    };
+
+    const handleGanttPhaseUpdate = async (phaseId: string, startDate: string, endDate: string) => {
+        await updatePhaseMut.mutateAsync({ id: phaseId, startDate, endDate });
+    };
+
+    const updateBudgetDraft = (phaseId: string, field: "name" | "budgetHours" | "budgetAmount" | "feeType" | "startDate" | "endDate", value: string) => {
+        setBudgetDrafts((prev) => ({
+            ...prev,
+            [phaseId]: {
+                ...prev[phaseId],
+                [field]: value,
+            },
+        }));
+    };
+
+    const resetBudgetDraft = (phase: any) => {
+        setBudgetDrafts((prev) => ({
+            ...prev,
+            [phase.id]: {
+                name: phase.name || "",
+                budgetHours: String(phase.budgetHours ?? 0),
+                budgetAmount: String(phase.budgetAmount ?? 0),
+                feeType: phase.feeType || "hourly",
+                startDate: phase.startDate || "",
+                endDate: phase.endDate || "",
+            },
+        }));
+    };
+
+    const isBudgetDraftDirty = (phase: any) => {
+        const draft = budgetDrafts[phase.id];
+        if (!draft) return false;
+        return draft.name !== (phase.name || "")
+            || Number(draft.budgetHours || 0) !== Number(phase.budgetHours || 0)
+            || Number(draft.budgetAmount || 0) !== Number(phase.budgetAmount || 0)
+            || draft.feeType !== (phase.feeType || "hourly")
+            || draft.startDate !== (phase.startDate || "")
+            || draft.endDate !== (phase.endDate || "");
+    };
+
+    const saveBudgetPhase = async (phaseId: string) => {
+        const draft = budgetDrafts[phaseId];
+        if (!draft) return;
+        setSavingBudgetPhaseId(phaseId);
+        try {
+            await updatePhaseMut.mutateAsync({
+                id: phaseId,
+                name: draft.name.trim() || "Untitled phase",
+                budgetHours: Number(draft.budgetHours || 0),
+                budgetAmount: Number(draft.budgetAmount || 0),
+                feeType: draft.feeType as "hourly" | "fixed" | "not-to-exceed",
+                startDate: draft.startDate,
+                endDate: draft.endDate,
+            });
+        } finally {
+            setSavingBudgetPhaseId(null);
+        }
+    };
 
     return (
         <div>
@@ -232,6 +357,13 @@ export default function ProjectDetailPage() {
                         <p style={{ marginTop: "8px", fontSize: "22px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{card.value}</p>
                     </div>
                 ))}
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "20px" }}>
+                {riskBadge("Budget", budgetRisk)}
+                {riskBadge("Schedule", scheduleRisk)}
+                {riskBadge("Cash", cashRisk)}
+                {riskBadge("Execution", workRisk)}
             </div>
 
             <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "1px solid var(--border-primary)" }}>
@@ -301,7 +433,7 @@ export default function ProjectDetailPage() {
                                                 <div style={{ padding: "12px 16px 16px 36px", fontSize: "12px", color: "var(--text-secondary)" }}>
                                                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
                                                         <div>
-                                                            <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Fee</span>
+                                                            <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Phase Budget</span>
                                                             <p style={{ fontWeight: 500, marginTop: "2px" }}>{formatCurrency(phase.fee)}</p>
                                                         </div>
                                                         <div>
@@ -352,7 +484,7 @@ export default function ProjectDetailPage() {
                                     { label: "Type", value: project.type },
                                     { label: "Start Date", value: project.startDate },
                                     { label: "End Date", value: project.endDate },
-                                    { label: "Total Fee", value: formatCurrency(totalFee) },
+                                    { label: "Total Phase Budget", value: formatCurrency(totalFee) },
                                 ].map((detail, i) => (
                                     <div key={i} style={{ display: "flex", justifyContent: "space-between" }}>
                                         <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{detail.label}</span>
@@ -392,31 +524,57 @@ export default function ProjectDetailPage() {
                                 </div>
                             </div>
                         )}
+
+                        <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "12px" }}>Action Queue</h3>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                {[
+                                    { label: "Overdue tasks", value: overdueTasks, critical: overdueTasks > 0 },
+                                    { label: "Tasks due in 7 days", value: dueSoonTasks, critical: false },
+                                    { label: "Unassigned open tasks", value: unassignedTasks, critical: unassignedTasks > 0 },
+                                    { label: "Overdue deliverables", value: overdueDeliverables, critical: overdueDeliverables > 0 },
+                                    { label: "Deliverables due in 7 days", value: dueSoonDeliverables, critical: false },
+                                    { label: "Upcoming milestones (7d)", value: upcomingMilestones, critical: false },
+                                ].map((item) => (
+                                    <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "var(--text-secondary)" }}>
+                                        <span>{item.label}</span>
+                                        <span style={{ fontWeight: 600, color: item.critical ? "var(--danger)" : "var(--text-primary)" }}>{item.value}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
 
             {/* Gantt tab */}
             {activeTab === "gantt" && (
-                <GanttChart
-                    projects={[{
-                        id: project.id,
-                        name: project.name,
-                        client: project.client,
-                        startDate: project.startDate,
-                        endDate: project.endDate,
-                        phases: project.phases.map((ph: Phase) => ({
-                            id: ph.id,
-                            name: ph.name,
-                            startDate: ph.startDate,
-                            endDate: ph.endDate,
-                            color: "",
-                            progress: ph.progress,
-                            milestones: ph.milestones,
-                        })),
-                    }]}
-                    zoomLevel="month"
-                />
+                <div style={{ width: "100%", maxWidth: "100%", minWidth: 0 }}>
+                    <GanttChart
+                        projects={[{
+                            id: project.id,
+                            name: project.name,
+                            client: project.client,
+                            startDate: project.startDate,
+                            endDate: project.endDate,
+                            phases: project.phases.map((ph: Phase) => ({
+                                id: ph.id,
+                                name: ph.name,
+                                startDate: ph.startDate,
+                                endDate: ph.endDate,
+                                color: "",
+                                progress: ph.progress,
+                                milestones: ph.milestones,
+                            })),
+                        }]}
+                        zoomLevel={ganttZoom}
+                        onZoomChange={setGanttZoom}
+                        onPhaseUpdate={handleGanttPhaseUpdate}
+                    />
+                    {updatePhaseMut.isPending && (
+                        <p style={{ marginTop: "8px", fontSize: "11px", color: "var(--text-muted)" }}>Updating timeline...</p>
+                    )}
+                </div>
             )}
 
             {/* Expenses tab */}
@@ -427,7 +585,7 @@ export default function ProjectDetailPage() {
                         <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                             {(projectExpenses as any[]).length} expense{(projectExpenses as any[]).length !== 1 ? "s" : ""}
                             {" · "}
-                            ${(projectExpenses as any[]).reduce((s: number, e: any) => s + e.amount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            {formatCurrency((projectExpenses as any[]).reduce((s: number, e: any) => s + e.amount, 0))}
                         </span>
                     </div>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -446,7 +604,7 @@ export default function ProjectDetailPage() {
                                     <td style={{ padding: "10px 14px", fontSize: "12px", color: "var(--text-secondary)" }}>{exp.date}</td>
                                     <td style={{ padding: "10px 14px", fontSize: "12px", color: "var(--text-secondary)" }}>{exp.category}</td>
                                     <td style={{ padding: "10px 14px", fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{exp.description}</td>
-                                    <td style={{ padding: "10px 14px", fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>${exp.amount.toFixed(2)}</td>
+                                    <td style={{ padding: "10px 14px", fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{formatCurrency(exp.amount)}</td>
                                     <td style={{ padding: "10px 14px" }}>
                                         <span style={{
                                             fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", textTransform: "uppercase",
@@ -566,49 +724,235 @@ export default function ProjectDetailPage() {
             )}
             {/* Budget tab */}
             {activeTab === "budget" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "16px" }}>
-                    <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                        <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "20px" }}>Phase Budget Breakdown</h3>
-                        {perfData?.phases.map((ph: any) => (
-                            <div key={ph.id} style={{ marginBottom: "16px" }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                                    <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{ph.name}</span>
-                                    <span style={{ fontSize: "11px", color: ph.burnPct > 100 ? "var(--danger)" : ph.burnPct > 80 ? "var(--warning)" : "var(--text-muted)", fontWeight: 500 }}>{ph.burnPct}% burned</span>
+                <div style={{ display: "grid", gap: "16px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px" }}>
+                        {[
+                            { label: "Hours Burn", value: `${budgetSummary?.totalUsedHours ?? 0}h / ${budgetSummary?.totalBudgetHours ?? 0}h`, meta: `${budgetSummary?.overallBurn ?? 0}% used`, icon: Clock, color: "var(--accent-gold)" },
+                            { label: "Phase Budget", value: formatCurrency(budgetSummary?.totalBudgetAmount ?? 0), meta: `${budgetSummary?.budgetCoveragePct ?? 0}% of contract allocated`, icon: DollarSign, color: "var(--accent-primary)" },
+                            { label: "Cash Collected", value: formatCurrency(budgetFinances?.collectedAmount ?? 0), meta: `${cashCollectedPct}% of contract recovered`, icon: Receipt, color: "var(--success)" },
+                            {
+                                label: "Forecast Burn",
+                                value: budgetForecast?.forecastHoursAtCompletion ? `${budgetForecast.forecastHoursAtCompletion}h` : "Not enough data",
+                                meta: budgetForecast?.projectedOverallBurn ? `${budgetForecast.projectedOverallBurn}% at completion` : "Waiting on schedule data",
+                                icon: TrendingUp,
+                                color: budgetForecast && budgetForecast.projectedOverallBurn > 100 ? "var(--danger)" : "var(--info)",
+                            },
+                        ].map((card) => {
+                            const Icon = card.icon;
+                            return (
+                                <div key={card.label} style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px" }}>
+                                        <div>
+                                            <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>{card.label}</p>
+                                            <p style={{ fontSize: "18px", color: "var(--text-primary)", fontWeight: 500 }}>{card.value}</p>
+                                        </div>
+                                        <div style={{ width: "32px", height: "32px", borderRadius: "8px", display: "grid", placeItems: "center", background: `${card.color}15`, color: card.color }}>
+                                            <Icon size={16} />
+                                        </div>
+                                    </div>
+                                    <p style={{ fontSize: "11px", color: "var(--text-muted)" }}>{card.meta}</p>
                                 </div>
-                                <div style={{ height: "6px", borderRadius: "3px", background: "var(--bg-tertiary)", marginBottom: "6px" }}>
-                                    <div style={{ height: "100%", borderRadius: "3px", width: `${Math.min(ph.burnPct, 100)}%`, background: ph.burnPct > 100 ? "var(--danger)" : ph.burnPct > 80 ? "var(--warning)" : "var(--accent-primary)", transition: "width 0.3s" }} />
+                            );
+                        })}
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "16px", alignItems: "start" }}>
+                        <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", marginBottom: "20px", flexWrap: "wrap" }}>
+                                <div>
+                                    <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Budget Control</h3>
+                                    <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>Tune each phase budget, fee type, and schedule here. The metrics below refresh from actual time, invoices, payments, and expenses.</p>
                                 </div>
-                                <div style={{ display: "flex", gap: "16px", fontSize: "11px", color: "var(--text-muted)" }}>
-                                    <span>Budget: {ph.budgetHours}h</span>
-                                    <span>Used: {ph.usedHours.toFixed(1)}h</span>
-                                    <span>Remaining: {ph.remaining.toFixed(1)}h</span>
-                                    {ph.budgetAmount > 0 && <span>${ph.budgetAmount.toLocaleString()}</span>}
+                                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                    {riskBadge("Budget", budgetRisk)}
+                                    {riskBadge("Cash", cashRisk)}
                                 </div>
                             </div>
-                        ))}
-                        {(!perfData || perfData.phases.length === 0) && <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300, textAlign: "center", padding: "20px" }}>No phases to show.</p>}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                        <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Summary</h3>
-                            {[{ label: "Total Budget", value: `${perfData?.totalBudget || 0}h` }, { label: "Hours Used", value: `${perfData?.totalUsed?.toFixed(1) || 0}h` }, { label: "Overall Burn", value: `${perfData?.overallBurn || 0}%` }, { label: "Schedule Variance", value: `${(perfData?.scheduleVariance || 0) > 0 ? "+" : ""}${perfData?.scheduleVariance || 0}%` }].map((r, i) => (
-                                <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-                                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{r.label}</span>
-                                    <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{r.value}</span>
-                                </div>
-                            ))}
+
+                            {budgetPhases.length === 0 && (
+                                <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300, textAlign: "center", padding: "24px 0" }}>No phases yet. Add phases first to control budget.</p>
+                            )}
+
+                            {budgetPhases.map((phase) => {
+                                const draft = budgetDrafts[phase.id] || {
+                                    name: phase.name || "",
+                                    budgetHours: String(phase.budgetHours ?? 0),
+                                    budgetAmount: String(phase.budgetAmount ?? 0),
+                                    feeType: phase.feeType || "hourly",
+                                    startDate: phase.startDate || "",
+                                    endDate: phase.endDate || "",
+                                };
+                                const burnColor = phase.burnPct > 100 ? "var(--danger)" : phase.burnPct > 85 ? "var(--warning)" : "var(--accent-primary)";
+                                const scheduleColor = phase.scheduleVariance < -10 ? "var(--danger)" : phase.scheduleVariance < -3 ? "var(--warning)" : "var(--success)";
+                                const isDirty = isBudgetDraftDirty(phase);
+                                const isSaving = savingBudgetPhaseId === phase.id;
+
+                                return (
+                                    <div key={phase.id} style={{ padding: "18px", borderRadius: "10px", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", marginBottom: "14px" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", flexWrap: "wrap", marginBottom: "14px" }}>
+                                            <div>
+                                                <p style={{ fontSize: "14px", color: "var(--text-primary)", fontWeight: 500 }}>{phase.name}</p>
+                                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                                                    {phase.status === "over-budget" ? "Over budget" : phase.status === "at-risk" ? "At risk" : phase.status === "active" ? "Active" : phase.status === "complete" ? "Complete" : "Planned"}
+                                                    {phase.projectedBurnPct ? ` · Forecast ${phase.projectedBurnPct}% burn` : ""}
+                                                </p>
+                                            </div>
+                                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                                <span style={{ fontSize: "10px", fontWeight: 600, color: burnColor, background: `${burnColor}14`, padding: "4px 8px", borderRadius: "999px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                                    {phase.burnPct}% burn
+                                                </span>
+                                                <span style={{ fontSize: "10px", fontWeight: 600, color: scheduleColor, background: `${scheduleColor}14`, padding: "4px 8px", borderRadius: "999px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                                    {phase.scheduleVariance >= 0 ? "+" : ""}{phase.scheduleVariance}% schedule
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px", marginBottom: "14px" }}>
+                                            <div>
+                                                <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Phase Name</label>
+                                                <input type="text" value={draft.name} onChange={(e) => updateBudgetDraft(phase.id, "name", e.target.value)} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Fee Type</label>
+                                                <select value={draft.feeType} onChange={(e) => updateBudgetDraft(phase.id, "feeType", e.target.value)} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                                    <option value="hourly">Hourly</option>
+                                                    <option value="fixed">Fixed Fee</option>
+                                                    <option value="not-to-exceed">Not to Exceed</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Budget Hours</label>
+                                                <input type="number" min="0" step="0.5" value={draft.budgetHours} onChange={(e) => updateBudgetDraft(phase.id, "budgetHours", e.target.value)} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Budget Amount</label>
+                                                <input type="number" min="0" step="1000" value={draft.budgetAmount} onChange={(e) => updateBudgetDraft(phase.id, "budgetAmount", e.target.value)} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Start</label>
+                                                <input type="date" value={draft.startDate} onChange={(e) => updateBudgetDraft(phase.id, "startDate", e.target.value)} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>End</label>
+                                                <input type="date" value={draft.endDate} onChange={(e) => updateBudgetDraft(phase.id, "endDate", e.target.value)} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                            </div>
+                                        </div>
+
+                                        <div style={{ height: "7px", borderRadius: "999px", background: "var(--bg-tertiary)", overflow: "hidden", marginBottom: "14px" }}>
+                                            <div style={{ height: "100%", width: `${Math.min(phase.burnPct, 100)}%`, background: burnColor, transition: "width 0.3s" }} />
+                                        </div>
+
+                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", marginBottom: "14px" }}>
+                                            {[
+                                                { label: "Used", value: `${phase.usedHours}h`, meta: `Remaining ${phase.remainingHours}h` },
+                                                { label: "Recent 30 Days", value: `${phase.recentHours}h`, meta: "Current burn pace" },
+                                                { label: "Labor Cost", value: formatCurrency(phase.laborCost), meta: `Avg ${formatCurrency(phase.avgCostRate)}/h` },
+                                                { label: "Billable Value", value: formatCurrency(phase.billableValue), meta: `Avg ${formatCurrency(phase.avgBillRate)}/h` },
+                                                { label: "Budget Rate", value: draft.budgetHours && Number(draft.budgetHours) > 0 ? formatCurrency(Number(draft.budgetAmount || 0) / Number(draft.budgetHours || 1)) : "—", meta: "Fee per budgeted hour" },
+                                                { label: "Planned Progress", value: `${phase.plannedProgress}%`, meta: `Actual ${phase.actualProgress}%` },
+                                            ].map((metric) => (
+                                                <div key={metric.label} style={{ padding: "12px", borderRadius: "8px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
+                                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>{metric.label}</p>
+                                                    <p style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{metric.value}</p>
+                                                    <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>{metric.meta}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                                            <p style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                                                {phase.forecastHoursAtCompletion
+                                                    ? `Projected finish at ${phase.forecastHoursAtCompletion}h based on current pace.`
+                                                    : "Forecast will improve once this phase has both schedule dates and logged time."}
+                                            </p>
+                                            <div style={{ display: "flex", gap: "8px" }}>
+                                                <button onClick={() => resetBudgetDraft(phase)} disabled={!isDirty || isSaving}
+                                                    style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", color: "var(--text-secondary)", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !isDirty || isSaving ? 0.5 : 1 }}>
+                                                    Reset
+                                                </button>
+                                                <button onClick={() => saveBudgetPhase(phase.id)} disabled={!isDirty || isSaving}
+                                                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !isDirty || isSaving ? 0.55 : 1 }}>
+                                                    {isSaving && <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />}
+                                                    {isSaving ? "Saving..." : "Save Budget"}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
-                        {profitData && (
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
                             <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                                <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Profitability</h3>
-                                {[{ label: "Revenue", value: `$${profitData.revenue.toLocaleString()}` }, { label: "Labor Cost", value: `$${profitData.laborCost.toLocaleString()}` }, { label: "Expenses", value: `$${profitData.expenseCost.toLocaleString()}` }, { label: "Gross Profit", value: `$${profitData.grossProfit.toLocaleString()}` }, { label: "Margin", value: `${profitData.margin}%` }, { label: "Multiplier", value: `${profitData.multiplier}x` }].map((r, i) => (
-                                    <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-                                        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{r.label}</span>
-                                        <span style={{ fontSize: "12px", fontWeight: 500, color: r.label === "Gross Profit" ? (profitData.grossProfit >= 0 ? "var(--success)" : "var(--danger)") : "var(--text-primary)" }}>{r.value}</span>
+                                <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Budget Health</h3>
+                                {budgetAlerts.length === 0 ? (
+                                    <p style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 300 }}>No urgent budget flags right now. Allocation and cash flow look healthy.</p>
+                                ) : (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                                        {budgetAlerts.map((alert, index) => {
+                                            const color = alert.tone === "danger" ? "var(--danger)" : alert.tone === "warning" ? "var(--warning)" : "var(--info)";
+                                            return (
+                                                <div key={index} style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "10px 12px", borderRadius: "8px", background: `${color}12`, color }}>
+                                                    <AlertTriangle size={14} style={{ marginTop: "2px", flexShrink: 0 }} />
+                                                    <span style={{ fontSize: "12px", lineHeight: 1.5 }}>{alert.text}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                                <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Money Flow</h3>
+                                {[
+                                    { label: "Contract", value: formatCurrency(project.contractValue) },
+                                    { label: "Phase Budget", value: formatCurrency(budgetSummary?.totalBudgetAmount ?? 0) },
+                                    { label: "Invoiced", value: formatCurrency(budgetFinances?.invoicedAmount ?? 0) },
+                                    { label: "Collected", value: formatCurrency(budgetFinances?.collectedAmount ?? 0) },
+                                    { label: "Outstanding", value: formatCurrency(budgetFinances?.outstandingAmount ?? 0) },
+                                    { label: "Draft Invoices", value: formatCurrency(budgetFinances?.draftAmount ?? 0) },
+                                    { label: "Labor Cost", value: formatCurrency(budgetFinances?.laborCost ?? 0) },
+                                    { label: "Expenses", value: formatCurrency(budgetFinances?.expenseCost ?? 0) },
+                                    { label: "Gross Profit", value: formatCurrency(budgetFinances?.grossProfit ?? 0) },
+                                    { label: "Cash Position", value: formatCurrency(budgetFinances?.cashPosition ?? 0) },
+                                ].map((row) => (
+                                    <div key={row.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid var(--border-primary)" }}>
+                                        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{row.label}</span>
+                                        <span style={{ fontSize: "12px", fontWeight: 500, color: row.label === "Gross Profit" || row.label === "Cash Position" ? ((budgetFinances?.[row.label === "Gross Profit" ? "grossProfit" : "cashPosition"] ?? 0) >= 0 ? "var(--success)" : "var(--danger)") : "var(--text-primary)" }}>{row.value}</span>
                                     </div>
                                 ))}
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginTop: "14px" }}>
+                                    <div style={{ padding: "12px", borderRadius: "8px", background: "var(--bg-secondary)" }}>
+                                        <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Margin</p>
+                                        <p style={{ fontSize: "15px", fontWeight: 500, color: "var(--text-primary)" }}>{budgetFinances?.margin ?? 0}%</p>
+                                    </div>
+                                    <div style={{ padding: "12px", borderRadius: "8px", background: "var(--bg-secondary)" }}>
+                                        <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Multiplier</p>
+                                        <p style={{ fontSize: "15px", fontWeight: 500, color: "var(--text-primary)" }}>{budgetFinances?.multiplier ?? 0}x</p>
+                                    </div>
+                                </div>
                             </div>
-                        )}
+
+                            <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                                <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Forecast & Allocation</h3>
+                                {[
+                                    { label: "Remaining Hours", value: `${budgetSummary?.totalRemainingHours ?? 0}h` },
+                                    { label: "Recent Burn / Week", value: `${budgetSummary?.recentBurnRateHoursPerWeek ?? 0}h` },
+                                    { label: "Projected Depletion", value: budgetForecast?.projectedDepletionDate || "No pace yet" },
+                                    { label: "Schedule Variance", value: `${(budgetSummary?.scheduleVariance ?? 0) >= 0 ? "+" : ""}${budgetSummary?.scheduleVariance ?? 0}%` },
+                                    { label: "Unallocated Contract", value: formatCurrency(budgetSummary?.unallocatedContract ?? 0) },
+                                    { label: "Overdue Receivables", value: formatCurrency(budgetFinances?.overdueAmount ?? 0) },
+                                ].map((row) => (
+                                    <div key={row.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid var(--border-primary)" }}>
+                                        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{row.label}</span>
+                                        <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{row.value}</span>
+                                    </div>
+                                ))}
+                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "14px", lineHeight: 1.6 }}>
+                                    Budget is strongest when contract allocation, burn pace, and collections move together. This panel shows where they are drifting apart so you can rebalance phase budgets before the project gets noisy.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
@@ -657,7 +1001,7 @@ export default function ProjectDetailPage() {
                                 {(deliverables as any[]).map((d: any) => {
                                     const dsc: Record<string, { label: string; color: string; bg: string }> = { pending: { label: "Pending", color: "var(--text-muted)", bg: "var(--bg-secondary)" }, "in-progress": { label: "In Progress", color: "var(--info)", bg: "rgba(90,122,144,0.08)" }, completed: { label: "Completed", color: "var(--success)", bg: "rgba(90,122,70,0.08)" }, approved: { label: "Approved", color: "var(--accent-primary)", bg: "rgba(176,122,74,0.08)" } };
                                     const ds = dsc[d.status] || dsc.pending;
-                                    const statusCycle = ["pending", "in-progress", "completed", "approved"];
+                                    const statusCycle = ["pending", "in-progress", "completed", "approved"] as const;
                                     return (
                                         <tr key={d.id} style={{ borderBottom: "1px solid var(--border-primary)" }} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
                                             <td style={{ padding: "10px 14px" }}>
@@ -741,7 +1085,7 @@ export default function ProjectDetailPage() {
                             <input type="text" value={newPhase.name} onChange={(e) => setNewPhase(p => ({ ...p, name: e.target.value }))} placeholder="Phase name *" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
                                 <input type="number" value={newPhase.budgetHours} onChange={(e) => setNewPhase(p => ({ ...p, budgetHours: e.target.value }))} placeholder="Budget hours" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
-                                <input type="number" value={newPhase.budgetAmount} onChange={(e) => setNewPhase(p => ({ ...p, budgetAmount: e.target.value }))} placeholder="Budget $" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                <input type="number" value={newPhase.budgetAmount} onChange={(e) => setNewPhase(p => ({ ...p, budgetAmount: e.target.value }))} placeholder="Budget amount" style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
                                 <select value={newPhase.feeType} onChange={(e) => setNewPhase(p => ({ ...p, feeType: e.target.value }))} style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "13px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
                                     <option value="hourly">Hourly</option><option value="fixed">Fixed</option><option value="not-to-exceed">NTE</option>
                                 </select>
@@ -783,7 +1127,7 @@ export default function ProjectDetailPage() {
                             </div>
                             <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
                                 <button onClick={() => setShowEditProject(false)} style={{ padding: "10px 20px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>Cancel</button>
-                                <button onClick={() => updateProject.mutate({ id: projectId, name: editForm.name, type: editForm.type, status: editForm.status, contractValue: parseFloat(editForm.contractValue.replace(/[^0-9.]/g, "")) || 0, startDate: editForm.startDate, endDate: editForm.endDate })}
+                                <button onClick={() => updateProject.mutate({ id: projectId, name: editForm.name, type: editForm.type, status: editForm.status as "active" | "pipeline" | "on-hold" | "completed" | "archived", contractValue: parseFloat(editForm.contractValue.replace(/[^0-9.]/g, "")) || 0, startDate: editForm.startDate, endDate: editForm.endDate })}
                                     disabled={updateProject.isPending} style={{ padding: "10px 20px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "13px", fontWeight: 500, cursor: "pointer" }}>{updateProject.isPending ? "Saving..." : "Save Changes"}</button>
                             </div>
                         </div>

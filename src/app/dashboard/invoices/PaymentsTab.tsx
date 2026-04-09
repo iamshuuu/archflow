@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { trpc } from "@/app/providers";
 import { Plus, Loader2, CreditCard, X } from "lucide-react";
-import { formatCurrency, cardStyle, tableWrapStyle, thStyle, tdStyle, modalOverlay, modalBox, labelStyle, inputStyle, selectStyle, btnPrimary, btnSecondary } from "./InvoiceStyles";
+import { cardStyle, tableWrapStyle, thStyle, tdStyle, modalOverlay, modalBox, labelStyle, inputStyle, selectStyle, btnPrimary, btnSecondary } from "./InvoiceStyles";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 const methodLabels: Record<string, string> = { check: "Check", ach: "ACH Transfer", wire: "Wire Transfer", credit_card: "Credit Card", cash: "Cash", other: "Other" };
 
@@ -11,6 +12,7 @@ export default function PaymentsTab() {
     const { data: payments = [], isLoading } = trpc.invoice.listPayments.useQuery();
     const { data: invoices = [] } = trpc.invoice.list.useQuery();
     const recordPayment = trpc.invoice.recordPayment.useMutation({ onSuccess: () => utils.invoice.invalidate() });
+    const { formatCurrency } = useCurrencyFormatter();
     const [showAdd, setShowAdd] = useState(false);
     const [form, setForm] = useState({ invoiceId: "", amount: "", date: new Date().toISOString().slice(0, 10), method: "check", reference: "", notes: "" });
     const up = (k: string, v: string) => setForm({ ...form, [k]: v });

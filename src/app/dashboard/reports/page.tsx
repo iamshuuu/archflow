@@ -19,8 +19,7 @@ import {
     Activity,
     History,
 } from "lucide-react";
-
-const formatCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 type ReportType = "revenue" | "utilization" | "profitability" | "receivables" | "realization" | "profit-drivers" | "forecasts" | "retrospectives" | "activity";
 
@@ -34,6 +33,7 @@ export default function ReportsPage() {
     const [filterClient, setFilterClient] = useState("");
     const [filterDateFrom, setFilterDateFrom] = useState("");
     const [filterDateTo, setFilterDateTo] = useState("");
+    const { formatCurrency } = useCurrencyFormatter();
 
     const { data: rawProjects = [] } = trpc.project.budgets.useQuery();
     const { data: rawTeam = [] } = trpc.team.list.useQuery();

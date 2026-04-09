@@ -11,5 +11,4 @@ export const modalBox: React.CSSProperties = { width: "520px", maxHeight: "80vh"
 export const btnPrimary: React.CSSProperties = { padding: "10px 18px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", cursor: "pointer", fontSize: "12px", color: "white", fontWeight: 500 };
 export const btnSecondary: React.CSSProperties = { padding: "10px 18px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", fontSize: "12px", color: "var(--text-secondary)" };
 export const emptyTd = (cols: number): React.CSSProperties => ({ padding: "40px", textAlign: "center", fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 });
-export const formatCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 export const badgeStyle = (color: string, bg: string): React.CSSProperties => ({ fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", textTransform: "uppercase", letterSpacing: "0.04em", color, background: bg, display: "inline-flex", alignItems: "center", gap: "4px" });

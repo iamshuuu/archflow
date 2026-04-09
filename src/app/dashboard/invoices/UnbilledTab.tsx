@@ -1,10 +1,12 @@
 "use client";
 import { trpc } from "@/app/providers";
 import { Clock, Loader2, DollarSign } from "lucide-react";
-import { formatCurrency, cardStyle, tableWrapStyle, thStyle, tdStyle } from "./InvoiceStyles";
+import { cardStyle, tableWrapStyle, thStyle, tdStyle } from "./InvoiceStyles";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
 export default function UnbilledTab() {
     const { data: unbilled = [], isLoading } = trpc.invoice.unbilledWork.useQuery();
+    const { formatCurrency } = useCurrencyFormatter();
 
     if (isLoading) return <div style={{ padding: "60px", textAlign: "center" }}><Loader2 size={20} style={{ color: "var(--text-muted)", animation: "spin 1s linear infinite" }} /></div>;
 

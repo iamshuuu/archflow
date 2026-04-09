@@ -22,6 +22,7 @@ import {
     Percent,
     X,
 } from "lucide-react";
+import { useToast } from "../Toast";
 
 /* ─── Types ─── */
 type SettingsTab = "organization" | "regional" | "financial" | "permissions" | "timeoff" | "integrations";
@@ -94,11 +95,25 @@ const sectionTitle: React.CSSProperties = {
 export default function SettingsPage() {
     const [tab, setTab] = useState<SettingsTab>("organization");
     const [saved, setSaved] = useState(false);
+    const [saveError, setSaveError] = useState("");
+    const { addToast } = useToast();
+    const utils = trpc.useUtils();
 
     // Org settings data
     const { data: org, isLoading, refetch } = trpc.settings.get.useQuery();
     const updateOrg = trpc.settings.update.useMutation({
-        onSuccess: () => { refetch(); setSaved(true); setTimeout(() => setSaved(false), 2000); },
+        onSuccess: async () => {
+            await Promise.all([utils.settings.get.invalidate(), refetch()]);
+            setSaveError("");
+            setSaved(true);
+            addToast("Settings saved successfully", "success");
+            setTimeout(() => setSaved(false), 2000);
+        },
+        onError: (err) => {
+            const msg = err?.message || "Unable to save settings. Please try again.";
+            setSaveError(msg);
+            addToast(msg, "error");
+        },
     });
 
     // Time off policies
@@ -141,6 +156,7 @@ export default function SettingsPage() {
     };
 
     const handleSave = () => {
+        setSaveError("");
         const data: any = {};
         for (const key of Object.keys(form)) {
             if (form[key] !== (org as any)?.[key]) data[key] = form[key];
@@ -192,6 +208,11 @@ export default function SettingsPage() {
                     </button>
                 )}
             </div>
+            {saveError && (
+                <p style={{ marginTop: "-12px", marginBottom: "16px", fontSize: "12px", color: "var(--danger)" }}>
+                    {saveError}
+                </p>
+            )}
 
             {/* Tab navigation */}
             <div style={{ display: "flex", gap: "2px", marginBottom: "24px", borderBottom: "1px solid var(--border-primary)", paddingBottom: "0" }}>
@@ -325,7 +346,7 @@ export default function SettingsPage() {
                                                 style: "currency",
                                                 currency: getVal("currency") || "USD",
                                             }).format(12450.00);
-                                        } catch { return "$12,450.00"; }
+                                        } catch { return "12,450.00"; }
                                     })()}
                                 </p>
                             </div>
@@ -353,7 +374,7 @@ export default function SettingsPage() {
                         <p style={sectionTitle}><DollarSign size={16} /> Financial Configuration</p>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                             <div>
-                                <label style={labelStyle}>Annual Overhead Costs ($)</label>
+                                <label style={labelStyle}>Annual Overhead Costs</label>
                                 <input style={inputStyle} type="number" value={getVal("overheadCosts") || 0} onChange={e => setVal("overheadCosts", parseFloat(e.target.value) || 0)} />
                             </div>
                             <div>
@@ -425,8 +446,8 @@ export default function SettingsPage() {
                             {showNewRole && (
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 120px 40px", gap: "12px", alignItems: "center", padding: "8px 4px", borderRadius: "6px", border: "1px dashed var(--border-secondary)" }}>
                                     <input style={{ ...inputStyle, padding: "6px 8px", fontSize: "12px" }} placeholder="Role name" value={newRole.name} onChange={e => setNewRole(p => ({ ...p, name: e.target.value }))} />
-                                    <input style={{ ...inputStyle, padding: "6px 8px", fontSize: "12px" }} type="number" placeholder="Bill $" value={newRole.defaultBillRate || ""} onChange={e => setNewRole(p => ({ ...p, defaultBillRate: parseFloat(e.target.value) || 0 }))} />
-                                    <input style={{ ...inputStyle, padding: "6px 8px", fontSize: "12px" }} type="number" placeholder="Cost $" value={newRole.defaultCostRate || ""} onChange={e => setNewRole(p => ({ ...p, defaultCostRate: parseFloat(e.target.value) || 0 }))} />
+                                    <input style={{ ...inputStyle, padding: "6px 8px", fontSize: "12px" }} type="number" placeholder="Bill Rate" value={newRole.defaultBillRate || ""} onChange={e => setNewRole(p => ({ ...p, defaultBillRate: parseFloat(e.target.value) || 0 }))} />
+                                    <input style={{ ...inputStyle, padding: "6px 8px", fontSize: "12px" }} type="number" placeholder="Cost Rate" value={newRole.defaultCostRate || ""} onChange={e => setNewRole(p => ({ ...p, defaultCostRate: parseFloat(e.target.value) || 0 }))} />
                                     <div style={{ display: "flex", gap: "4px" }}>
                                         <button
                                             onClick={() => {
