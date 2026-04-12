@@ -496,7 +496,20 @@ export default function ProjectDetailPage() {
                                 <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No phases defined yet.</p>
                             </div>
                         ) : (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "0", position: "relative" }}>
+                                {project.phases.length > 1 && (
+                                    <div
+                                        style={{
+                                            position: "absolute",
+                                            left: "20px",
+                                            top: "22px",
+                                            bottom: "22px",
+                                            width: "1px",
+                                            background: "var(--border-primary)",
+                                            pointerEvents: "none",
+                                        }}
+                                    />
+                                )}
                                 {project.phases.map((phase, i) => {
                                     const sc = phaseStatusColors[phase.status];
                                     const expanded = activePhase === phase.id;
