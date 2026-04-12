@@ -114,6 +114,11 @@ export const projectRouter = router({
                         include: {
                             timeEntries: true,
                             milestones: true,
+                            assignments: {
+                                include: {
+                                    user: { select: { id: true, name: true, title: true, billRate: true, costRate: true } },
+                                },
+                            },
                         },
                     },
                 },
@@ -235,6 +240,49 @@ export const projectRouter = router({
         }),
 
     // ─── Pipeline Stage ───
+    assignPhaseMember: protectedProcedure
+        .input(z.object({
+            phaseId: z.string(),
+            userId: z.string(),
+            roleLabel: z.string().default(""),
+            plannedHours: z.number().default(0),
+        }))
+        .mutation(async ({ ctx, input }) => {
+            const user = await requireCurrentUser(ctx);
+            await ensurePhaseAccess(ctx, user.orgId, input.phaseId);
+            const member = await ctx.db.user.findFirst({
+                where: { id: input.userId, orgId: user.orgId },
+                select: { id: true },
+            });
+            if (!member) throw new TRPCError({ code: "FORBIDDEN", message: "Team member not found or inaccessible" });
+
+            return ctx.db.phaseAssignment.upsert({
+                where: {
+                    phaseId_userId: {
+                        phaseId: input.phaseId,
+                        userId: input.userId,
+                    },
+                },
+                update: { roleLabel: input.roleLabel, plannedHours: input.plannedHours },
+                create: input,
+                include: {
+                    user: { select: { id: true, name: true, title: true, billRate: true, costRate: true } },
+                },
+            });
+        }),
+
+    removePhaseAssignment: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const user = await requireCurrentUser(ctx);
+            const assignment = await ctx.db.phaseAssignment.findFirst({
+                where: { id: input.id, phase: { project: { orgId: user.orgId } } },
+                select: { id: true },
+            });
+            if (!assignment) throw new TRPCError({ code: "FORBIDDEN", message: "Phase assignment not found or inaccessible" });
+            return ctx.db.phaseAssignment.delete({ where: { id: input.id } });
+        }),
+
     updatePipelineStage: protectedProcedure
         .input(z.object({
             id: z.string(),

@@ -109,6 +109,7 @@ model User {
   notifications          Notification[]
   expenses               Expense[]
   allocations            Allocation[]
+  phaseAssignments       PhaseAssignment[]
   tasks                  Task[]
   timeOffRequests        TimeOffRequest[]
   timesheetSubmissions   TimesheetSubmission[]
@@ -210,9 +211,25 @@ model Phase {
 
   timeEntries   TimeEntry[]
   milestones    Milestone[]
+  assignments   PhaseAssignment[]
   tasks         Task[]
   deliverables  Deliverable[]
   files         ProjectFile[]
+}
+
+model PhaseAssignment {
+  id           String   @id @default(cuid())
+  roleLabel    String   @default("")
+  plannedHours Float    @default(0)
+  createdAt    DateTime @default(now())
+
+  phaseId String
+  phase   Phase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([phaseId, userId])
 }
 
 // ─── Milestone ───

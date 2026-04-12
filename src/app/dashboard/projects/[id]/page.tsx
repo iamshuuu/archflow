@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { trpc } from "@/app/providers";
@@ -46,6 +46,7 @@ interface Phase {
     startDate: string;
     endDate: string;
     milestones: { id: string; name: string; done: boolean; date: string }[];
+    assignments: { id: string; roleLabel: string; plannedHours: number; user: { id: string; name: string; title: string; billRate: number; costRate: number } }[];
 }
 
 interface ProjectDetail {
@@ -89,6 +90,8 @@ export default function ProjectDetailPage() {
     const [newTask, setNewTask] = useState({ title: "", phaseId: "", assigneeId: "", dueDate: "" });
     const [budgetDrafts, setBudgetDrafts] = useState<Record<string, { name: string; budgetHours: string; budgetAmount: string; feeType: string; startDate: string; endDate: string }>>({});
     const [savingBudgetPhaseId, setSavingBudgetPhaseId] = useState<string | null>(null);
+    const [milestoneDrafts, setMilestoneDrafts] = useState<Record<string, { name: string; date: string }>>({});
+    const [phaseStaffDrafts, setPhaseStaffDrafts] = useState<Record<string, { userId: string; roleLabel: string; plannedHours: string }>>({});
 
     const utils = trpc.useUtils();
 
@@ -123,6 +126,30 @@ export default function ProjectDetailPage() {
     const createDeliverableMut = trpc.project.createDeliverable.useMutation({ onSuccess: () => { utils.project.listDeliverables.invalidate(); setNewDeliverable({ title: "", description: "", dueDate: "", phaseId: "", assigneeId: "" }); setShowAddDeliverable(false); } });
     const updateDeliverableMut = trpc.project.updateDeliverable.useMutation({ onSuccess: () => utils.project.listDeliverables.invalidate() });
     const deleteDeliverableMut = trpc.project.deleteDeliverable.useMutation({ onSuccess: () => utils.project.listDeliverables.invalidate() });
+    const addMilestoneMut = trpc.project.addMilestone.useMutation({
+        onSuccess: () => {
+            utils.project.getById.invalidate();
+            utils.project.schedule.invalidate();
+        },
+    });
+    const updateMilestoneMut = trpc.project.updateMilestone.useMutation({
+        onSuccess: () => {
+            utils.project.getById.invalidate();
+            utils.project.schedule.invalidate();
+        },
+    });
+    const deleteMilestoneMut = trpc.project.deleteMilestone.useMutation({
+        onSuccess: () => {
+            utils.project.getById.invalidate();
+            utils.project.schedule.invalidate();
+        },
+    });
+    const assignPhaseMemberMut = trpc.project.assignPhaseMember.useMutation({
+        onSuccess: () => utils.project.getById.invalidate(),
+    });
+    const removePhaseAssignmentMut = trpc.project.removePhaseAssignment.useMutation({
+        onSuccess: () => utils.project.getById.invalidate(),
+    });
 
     const taskStatusCycle = ["todo", "in-progress", "review", "done"] as const;
     const taskStatusConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
@@ -133,7 +160,7 @@ export default function ProjectDetailPage() {
     };
 
     // Adapt DB data to UI shape
-    const project: ProjectDetail | null = rawProject ? {
+    const project: ProjectDetail | null = useMemo(() => rawProject ? {
         id: rawProject.id,
         name: rawProject.name,
         client: (rawProject as any).client?.name || "—",
@@ -169,9 +196,21 @@ export default function ProjectDetailPage() {
                     done: ms.done,
                     date: ms.date,
                 })),
+                assignments: (p.assignments || []).map((assignment: any) => ({
+                    id: assignment.id,
+                    roleLabel: assignment.roleLabel || "",
+                    plannedHours: assignment.plannedHours || 0,
+                    user: {
+                        id: assignment.user?.id || "",
+                        name: assignment.user?.name || "Unknown",
+                        title: assignment.user?.title || "",
+                        billRate: assignment.user?.billRate || 0,
+                        costRate: assignment.user?.costRate || 0,
+                    },
+                })),
             };
         }),
-    } : null;
+    } : null, [rawProject]);
 
     useEffect(() => {
         if (!budgetData?.phases) return;
@@ -191,6 +230,12 @@ export default function ProjectDetailPage() {
             ),
         );
     }, [budgetData]);
+
+    useEffect(() => {
+        if (!project) return;
+        setMilestoneDrafts(Object.fromEntries(project.phases.map((phase) => [phase.id, { name: "", date: "" }])));
+        setPhaseStaffDrafts(Object.fromEntries(project.phases.map((phase) => [phase.id, { userId: "", roleLabel: "", plannedHours: "" }])));
+    }, [project]);
 
     if (isLoading) {
         return (
@@ -228,6 +273,10 @@ export default function ProjectDetailPage() {
     const unassignedTasks = taskRows.filter((t) => t.status !== "done" && !t.assigneeId).length;
     const overdueDeliverables = deliverableRows.filter((d) => !["completed", "approved"].includes(d.status) && d.dueDate && d.dueDate < todayIso).length;
     const dueSoonDeliverables = deliverableRows.filter((d) => !["completed", "approved"].includes(d.status) && d.dueDate && d.dueDate >= todayIso && d.dueDate <= sevenDaysIso).length;
+    const totalMilestones = project.phases.reduce((sum, phase) => sum + phase.milestones.length, 0);
+    const totalAssignedMembers = new Set(project.phases.flatMap((phase) => phase.assignments.map((assignment) => assignment.user.id))).size;
+    const unstaffedPhases = project.phases.filter((phase) => phase.assignments.length === 0).length;
+    const phasesWithoutMilestones = project.phases.filter((phase) => phase.milestones.length === 0).length;
     const upcomingMilestones = project.phases
         .flatMap((ph) => ph.milestones)
         .filter((ms) => !ms.done && ms.date && ms.date >= todayIso && ms.date <= sevenDaysIso).length;
@@ -255,9 +304,55 @@ export default function ProjectDetailPage() {
         const bg = level === "high" ? "rgba(176,80,64,0.08)" : level === "medium" ? "rgba(176,138,48,0.08)" : "rgba(90,122,70,0.08)";
         return <span key={label} style={{ fontSize: "10px", fontWeight: 600, color, background: bg, padding: "4px 8px", borderRadius: "999px", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}: {level}</span>;
     };
+    const getInitials = (name: string) => name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("") || "?";
 
     const handleGanttPhaseUpdate = async (phaseId: string, startDate: string, endDate: string) => {
         await updatePhaseMut.mutateAsync({ id: phaseId, startDate, endDate });
+    };
+
+    const updateMilestoneDraft = (phaseId: string, field: "name" | "date", value: string) => {
+        setMilestoneDrafts((prev) => ({
+            ...prev,
+            [phaseId]: {
+                ...(prev[phaseId] || { name: "", date: "" }),
+                [field]: value,
+            },
+        }));
+    };
+
+    const addPhaseMilestone = async (phaseId: string) => {
+        const draft = milestoneDrafts[phaseId];
+        if (!draft?.name || !draft?.date) return;
+        await addMilestoneMut.mutateAsync({ projectId, phaseId, name: draft.name, date: draft.date });
+        setMilestoneDrafts((prev) => ({
+            ...prev,
+            [phaseId]: { name: "", date: "" },
+        }));
+    };
+
+    const updatePhaseStaffDraft = (phaseId: string, field: "userId" | "roleLabel" | "plannedHours", value: string) => {
+        setPhaseStaffDrafts((prev) => ({
+            ...prev,
+            [phaseId]: {
+                ...(prev[phaseId] || { userId: "", roleLabel: "", plannedHours: "" }),
+                [field]: value,
+            },
+        }));
+    };
+
+    const assignMemberToPhase = async (phaseId: string) => {
+        const draft = phaseStaffDrafts[phaseId];
+        if (!draft?.userId) return;
+        await assignPhaseMemberMut.mutateAsync({
+            phaseId,
+            userId: draft.userId,
+            roleLabel: draft.roleLabel,
+            plannedHours: Number(draft.plannedHours || 0),
+        });
+        setPhaseStaffDrafts((prev) => ({
+            ...prev,
+            [phaseId]: { userId: "", roleLabel: "", plannedHours: "" },
+        }));
     };
 
     const updateBudgetDraft = (phaseId: string, field: "name" | "budgetHours" | "budgetAmount" | "feeType" | "startDate" | "endDate", value: string) => {
@@ -431,7 +526,7 @@ export default function ProjectDetailPage() {
 
                                             {expanded && (
                                                 <div style={{ padding: "12px 16px 16px 36px", fontSize: "12px", color: "var(--text-secondary)" }}>
-                                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
+                                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px", marginBottom: "14px" }}>
                                                         <div>
                                                             <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Phase Budget</span>
                                                             <p style={{ fontWeight: 500, marginTop: "2px" }}>{formatCurrency(phase.fee)}</p>
@@ -452,18 +547,147 @@ export default function ProjectDetailPage() {
                                                             <p style={{ fontWeight: 500, marginTop: "2px" }}>{phase.progress}%</p>
                                                         </div>
                                                     </div>
-                                                    {phase.milestones.length > 0 && (
-                                                        <div>
-                                                            <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "6px" }}>Milestones</p>
-                                                            {phase.milestones.map((ms, mi) => (
-                                                                <div key={mi} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                                                                    {ms.done ? <CheckCircle2 size={12} style={{ color: "var(--success)" }} /> : <div style={{ width: "12px", height: "12px", borderRadius: "50%", border: "1.5px solid var(--border-secondary)" }} />}
-                                                                    <span style={{ fontSize: "11px" }}>{ms.name}</span>
-                                                                    <span style={{ fontSize: "10px", color: "var(--text-muted)", marginLeft: "auto" }}>{ms.date}</span>
+                                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "14px" }}>
+                                                        <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Milestones</p>
+                                                                <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{phase.milestones.length} total</span>
+                                                            </div>
+                                                            {phase.milestones.length === 0 ? (
+                                                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px" }}>No milestones yet. Add key approvals, submissions, or deadlines for this phase.</p>
+                                                            ) : (
+                                                                <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
+                                                                    {phase.milestones.map((ms) => (
+                                                                        <div key={ms.id} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", borderRadius: "6px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
+                                                                            <button
+                                                                                onClick={() => updateMilestoneMut.mutate({ id: ms.id, done: !ms.done })}
+                                                                                style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center" }}
+                                                                            >
+                                                                                {ms.done ? <CheckCircle2 size={14} style={{ color: "var(--success)" }} /> : <div style={{ width: "14px", height: "14px", borderRadius: "50%", border: "1.5px solid var(--border-secondary)" }} />}
+                                                                            </button>
+                                                                            <div style={{ flex: 1 }}>
+                                                                                <p style={{ fontSize: "11px", color: "var(--text-primary)", textDecoration: ms.done ? "line-through" : "none" }}>{ms.name}</p>
+                                                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>{ms.date || "No date"}</p>
+                                                                            </div>
+                                                                            <button
+                                                                                onClick={() => deleteMilestoneMut.mutate({ id: ms.id })}
+                                                                                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "2px" }}
+                                                                            >
+                                                                                <Trash2 size={12} />
+                                                                            </button>
+                                                                        </div>
+                                                                    ))}
                                                                 </div>
-                                                            ))}
+                                                            )}
+                                                            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr auto", gap: "8px", alignItems: "end" }}>
+                                                                <div>
+                                                                    <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Milestone</label>
+                                                                    <input
+                                                                        type="text"
+                                                                        value={milestoneDrafts[phase.id]?.name || ""}
+                                                                        onChange={(e) => updateMilestoneDraft(phase.id, "name", e.target.value)}
+                                                                        placeholder="Concept sign-off"
+                                                                        style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none" }}
+                                                                    />
+                                                                </div>
+                                                                <div>
+                                                                    <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Date</label>
+                                                                    <input
+                                                                        type="date"
+                                                                        value={milestoneDrafts[phase.id]?.date || ""}
+                                                                        onChange={(e) => updateMilestoneDraft(phase.id, "date", e.target.value)}
+                                                                        style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }}
+                                                                    />
+                                                                </div>
+                                                                <button
+                                                                    onClick={() => addPhaseMilestone(phase.id)}
+                                                                    disabled={!milestoneDrafts[phase.id]?.name || !milestoneDrafts[phase.id]?.date || addMilestoneMut.isPending}
+                                                                    style={{ padding: "8px 12px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !milestoneDrafts[phase.id]?.name || !milestoneDrafts[phase.id]?.date ? 0.5 : 1 }}
+                                                                >
+                                                                    Add
+                                                                </button>
+                                                            </div>
                                                         </div>
-                                                    )}
+
+                                                        <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Phase Team</p>
+                                                                <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{phase.assignments.length} assigned</span>
+                                                            </div>
+                                                            {phase.assignments.length === 0 ? (
+                                                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px" }}>No team assigned yet. Add people so this phase has clear ownership.</p>
+                                                            ) : (
+                                                                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
+                                                                    {phase.assignments.map((assignment) => (
+                                                                        <div key={assignment.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "8px 10px", borderRadius: "6px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
+                                                                            <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: "rgba(176,122,74,0.14)", color: "var(--accent-primary)", display: "grid", placeItems: "center", fontSize: "10px", fontWeight: 600 }}>
+                                                                                {getInitials(assignment.user.name)}
+                                                                            </div>
+                                                                            <div style={{ flex: 1 }}>
+                                                                                <p style={{ fontSize: "11px", color: "var(--text-primary)", fontWeight: 500 }}>{assignment.user.name}</p>
+                                                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>
+                                                                                    {assignment.roleLabel || assignment.user.title || "Team member"}
+                                                                                    {assignment.plannedHours > 0 ? ` · ${assignment.plannedHours}h planned` : ""}
+                                                                                </p>
+                                                                            </div>
+                                                                            <button
+                                                                                onClick={() => removePhaseAssignmentMut.mutate({ id: assignment.id })}
+                                                                                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "2px" }}
+                                                                            >
+                                                                                <X size={12} />
+                                                                            </button>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 0.8fr auto", gap: "8px", alignItems: "end" }}>
+                                                                <div>
+                                                                    <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Team Member</label>
+                                                                    <select
+                                                                        value={phaseStaffDrafts[phase.id]?.userId || ""}
+                                                                        onChange={(e) => updatePhaseStaffDraft(phase.id, "userId", e.target.value)}
+                                                                        style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}
+                                                                    >
+                                                                        <option value="">Select team member...</option>
+                                                                        {(teamMembers as any[])
+                                                                            .filter((member: any) => !phase.assignments.some((assignment) => assignment.user.id === member.id))
+                                                                            .map((member: any) => (
+                                                                                <option key={member.id} value={member.id}>{member.name}</option>
+                                                                            ))}
+                                                                    </select>
+                                                                </div>
+                                                                <div>
+                                                                    <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Role On Phase</label>
+                                                                    <input
+                                                                        type="text"
+                                                                        value={phaseStaffDrafts[phase.id]?.roleLabel || ""}
+                                                                        onChange={(e) => updatePhaseStaffDraft(phase.id, "roleLabel", e.target.value)}
+                                                                        placeholder="Lead designer"
+                                                                        style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none" }}
+                                                                    />
+                                                                </div>
+                                                                <div>
+                                                                    <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Planned Hrs</label>
+                                                                    <input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        step="1"
+                                                                        value={phaseStaffDrafts[phase.id]?.plannedHours || ""}
+                                                                        onChange={(e) => updatePhaseStaffDraft(phase.id, "plannedHours", e.target.value)}
+                                                                        placeholder="12"
+                                                                        style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none" }}
+                                                                    />
+                                                                </div>
+                                                                <button
+                                                                    onClick={() => assignMemberToPhase(phase.id)}
+                                                                    disabled={!phaseStaffDrafts[phase.id]?.userId || assignPhaseMemberMut.isPending}
+                                                                    style={{ padding: "8px 12px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !phaseStaffDrafts[phase.id]?.userId ? 0.5 : 1 }}
+                                                                >
+                                                                    Assign
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -502,6 +726,44 @@ export default function ProjectDetailPage() {
                             </div>
                         )}
 
+                        <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif", marginBottom: "16px" }}>Phase Team Map</h3>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                                {project.phases.map((phase) => (
+                                    <div key={phase.id} style={{ paddingBottom: "12px", borderBottom: "1px solid var(--border-primary)" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginBottom: "8px" }}>
+                                            <span style={{ fontSize: "12px", color: "var(--text-primary)", fontWeight: 500 }}>{phase.name}</span>
+                                            <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{phase.assignments.length} assigned</span>
+                                        </div>
+                                        {phase.assignments.length === 0 ? (
+                                            <p style={{ fontSize: "11px", color: "var(--text-muted)" }}>No one assigned yet.</p>
+                                        ) : (
+                                            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                                                {phase.assignments.map((assignment) => (
+                                                    <span key={assignment.id} style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 8px", borderRadius: "999px", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: "10px" }}>
+                                                        <span style={{ width: "18px", height: "18px", borderRadius: "50%", background: "rgba(176,122,74,0.14)", color: "var(--accent-primary)", display: "grid", placeItems: "center", fontSize: "9px", fontWeight: 600 }}>
+                                                            {getInitials(assignment.user.name)}
+                                                        </span>
+                                                        {assignment.user.name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                            <div style={{ marginTop: "14px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                                <div style={{ padding: "10px 12px", borderRadius: "8px", background: "var(--bg-secondary)" }}>
+                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Assigned Team</p>
+                                    <p style={{ fontSize: "15px", fontWeight: 500, color: "var(--text-primary)" }}>{totalAssignedMembers}</p>
+                                </div>
+                                <div style={{ padding: "10px 12px", borderRadius: "8px", background: "var(--bg-secondary)" }}>
+                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Milestones</p>
+                                    <p style={{ fontSize: "15px", fontWeight: 500, color: "var(--text-primary)" }}>{totalMilestones}</p>
+                                </div>
+                            </div>
+                        </div>
+
                         {/* Budget overview */}
                         {project.phases.length > 0 && (
                             <div style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
@@ -535,6 +797,8 @@ export default function ProjectDetailPage() {
                                     { label: "Overdue deliverables", value: overdueDeliverables, critical: overdueDeliverables > 0 },
                                     { label: "Deliverables due in 7 days", value: dueSoonDeliverables, critical: false },
                                     { label: "Upcoming milestones (7d)", value: upcomingMilestones, critical: false },
+                                    { label: "Phases without team", value: unstaffedPhases, critical: unstaffedPhases > 0 },
+                                    { label: "Phases without milestones", value: phasesWithoutMilestones, critical: phasesWithoutMilestones > 0 },
                                 ].map((item) => (
                                     <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "var(--text-secondary)" }}>
                                         <span>{item.label}</span>
