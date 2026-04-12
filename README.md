@@ -351,48 +351,7 @@ Custom CSS-variable-based design system with no CSS framework dependency:
 - **Components**: Hand-built cards, modals, tables, dropdowns, progress bars
 - **States**: Hover effects, loading spinners, empty state messaging
 
----
 
-## Roadmap
-
-### ✅ Completed — Phase 1 (Current)
-
-- [x] Landing page with marketing components
-- [x] Authentication (signup, login, session management)
-- [x] Multi-tenant database schema (8 models)
-- [x] tRPC API layer (4 routers, 17 procedures)
-- [x] Dashboard overview with live KPIs
-- [x] Projects CRUD with detail view
-- [x] Time tracking (weekly grid, timer, project picker from DB)
-- [x] Invoicing (create, list, status management)
-- [x] Team management (directory, utilization)
-- [x] Budget tracking (phase-level, computed from time entries)
-- [x] Reports (P&L, utilization, aged receivables, CSV export)
-- [x] Settings page
-
-### 🔜 Phase 2 — Planned
-
-- [ ] Client portal (view project progress, invoices)
-- [ ] Gantt chart for phase timeline visualization
-- [ ] Proposal tracking (pipeline → sent → won → lost)
-- [ ] Consultant collaboration (free accounts, limited access)
-- [ ] Document management (file storage per project)
-- [ ] QuickBooks / Xero integration
-- [ ] Stripe payment integration on invoices
-- [ ] PDF invoice export
-- [ ] Email notifications (invoice delivery, timesheet reminders)
-- [ ] Advanced resource forecasting
-
-### 🔮 Phase 3 — Future
-
-- [ ] AI-powered budget estimation from historical data
-- [ ] Auto-generated weekly status reports
-- [ ] Mobile app (React Native)
-- [ ] SSO (Google, Microsoft)
-- [ ] Real-time collaboration (WebSockets)
-- [ ] Custom report builder
-
----
 
 ## Scripts
 
