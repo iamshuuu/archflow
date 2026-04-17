@@ -16,9 +16,26 @@ async function ensureProjectAccess(ctx: TRPCContext, orgId: string, projectId: s
 }
 
 async function ensurePhaseAccess(ctx: TRPCContext, orgId: string, phaseId: string) {
-    const phase = await ctx.db.phase.findFirst({ where: { id: phaseId, project: { orgId } }, select: { id: true, projectId: true } });
+    const phase = await ctx.db.phase.findFirst({
+        where: { id: phaseId, project: { orgId } },
+        select: { id: true, projectId: true, startDate: true, endDate: true },
+    });
     if (!phase) throw new TRPCError({ code: "FORBIDDEN", message: "Phase not found or inaccessible" });
     return phase;
+}
+
+async function ensureMilestoneAccess(ctx: TRPCContext, orgId: string, milestoneId: string) {
+    const milestone = await ctx.db.milestone.findFirst({
+        where: { id: milestoneId, project: { orgId } },
+        select: {
+            id: true,
+            phaseId: true,
+            projectId: true,
+            phase: { select: { startDate: true, endDate: true } },
+        },
+    });
+    if (!milestone) throw new TRPCError({ code: "FORBIDDEN", message: "Milestone not found or inaccessible" });
+    return milestone;
 }
 
 async function ensureTemplateAccess(ctx: TRPCContext, orgId: string, templateId: string) {
@@ -48,6 +65,28 @@ function computePlannedProgress(startDate: string, endDate: string, now = new Da
 
     const elapsed = now.getTime() - start.getTime();
     return Math.max(0, Math.min(100, Math.round((elapsed / totalDuration) * 100)));
+}
+
+function assertDateWithinPhaseRange(
+    value: string | undefined,
+    phase: { startDate: string; endDate: string },
+    label: string,
+) {
+    if (!value) return;
+    const targetDate = parseDateOnly(value);
+    if (!targetDate) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `${label} date is invalid` });
+    }
+
+    const phaseStart = parseDateOnly(phase.startDate);
+    const phaseEnd = parseDateOnly(phase.endDate);
+
+    if (phaseStart && targetDate < phaseStart) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `${label} must be on or after the phase start date` });
+    }
+    if (phaseEnd && targetDate > phaseEnd) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `${label} must be on or before the phase end date` });
+    }
 }
 
 export const projectRouter = router({
@@ -197,6 +236,7 @@ export const projectRouter = router({
             phaseId: z.string(),
             projectId: z.string(),
             name: z.string().min(1),
+            description: z.string().default(""),
             date: z.string(),
         }))
         .mutation(async ({ ctx, input }) => {
@@ -206,6 +246,7 @@ export const projectRouter = router({
             if (phase.projectId !== input.projectId) {
                 throw new TRPCError({ code: "BAD_REQUEST", message: "Phase does not belong to project" });
             }
+            assertDateWithinPhaseRange(input.date, phase, "Milestone");
             return ctx.db.milestone.create({ data: input });
         }),
 
@@ -213,6 +254,7 @@ export const projectRouter = router({
         .input(z.object({
             id: z.string(),
             name: z.string().optional(),
+            description: z.string().optional(),
             date: z.string().optional(),
             done: z.boolean().optional(),
         }))
@@ -220,9 +262,15 @@ export const projectRouter = router({
             const user = await requireCurrentUser(ctx);
             const milestone = await ctx.db.milestone.findFirst({
                 where: { id: input.id, project: { orgId: user.orgId } },
-                select: { id: true },
+                select: {
+                    id: true,
+                    phase: { select: { startDate: true, endDate: true } },
+                },
             });
             if (!milestone) throw new TRPCError({ code: "FORBIDDEN", message: "Milestone not found or inaccessible" });
+            if (typeof input.date === "string") {
+                assertDateWithinPhaseRange(input.date, milestone.phase, "Milestone");
+            }
             const { id, ...data } = input;
             return ctx.db.milestone.update({ where: { id }, data });
         }),
@@ -246,15 +294,18 @@ export const projectRouter = router({
             userId: z.string(),
             roleLabel: z.string().default(""),
             plannedHours: z.number().default(0),
+            billRate: z.number().optional(),
         }))
         .mutation(async ({ ctx, input }) => {
             const user = await requireCurrentUser(ctx);
             await ensurePhaseAccess(ctx, user.orgId, input.phaseId);
             const member = await ctx.db.user.findFirst({
                 where: { id: input.userId, orgId: user.orgId },
-                select: { id: true },
+                select: { id: true, title: true, billRate: true },
             });
             if (!member) throw new TRPCError({ code: "FORBIDDEN", message: "Team member not found or inaccessible" });
+            const roleLabel = input.roleLabel || member.title || "";
+            const billRate = typeof input.billRate === "number" ? input.billRate : (member.billRate || 0);
 
             return ctx.db.phaseAssignment.upsert({
                 where: {
@@ -263,8 +314,32 @@ export const projectRouter = router({
                         userId: input.userId,
                     },
                 },
-                update: { roleLabel: input.roleLabel, plannedHours: input.plannedHours },
-                create: input,
+                update: { roleLabel, plannedHours: input.plannedHours, billRate },
+                create: { ...input, roleLabel, billRate },
+                include: {
+                    user: { select: { id: true, name: true, title: true, billRate: true, costRate: true } },
+                },
+            });
+        }),
+
+    updatePhaseAssignment: protectedProcedure
+        .input(z.object({
+            id: z.string(),
+            roleLabel: z.string().optional(),
+            plannedHours: z.number().optional(),
+            billRate: z.number().optional(),
+        }))
+        .mutation(async ({ ctx, input }) => {
+            const user = await requireCurrentUser(ctx);
+            const assignment = await ctx.db.phaseAssignment.findFirst({
+                where: { id: input.id, phase: { project: { orgId: user.orgId } } },
+                select: { id: true },
+            });
+            if (!assignment) throw new TRPCError({ code: "FORBIDDEN", message: "Phase assignment not found or inaccessible" });
+            const { id, ...data } = input;
+            return ctx.db.phaseAssignment.update({
+                where: { id },
+                data,
                 include: {
                     user: { select: { id: true, name: true, title: true, billRate: true, costRate: true } },
                 },
@@ -823,6 +898,7 @@ export const projectRouter = router({
                 include: {
                     assignee: { select: { id: true, name: true } },
                     phase: { select: { id: true, name: true } },
+                    milestone: { select: { id: true, name: true, date: true, done: true } },
                 },
                 orderBy: [{ phaseId: "asc" }, { sortOrder: "asc" }],
             });
@@ -832,6 +908,7 @@ export const projectRouter = router({
         .input(z.object({
             projectId: z.string(),
             phaseId: z.string(),
+            milestoneId: z.string().optional(),
             title: z.string().min(1),
             description: z.string().default(""),
             dueDate: z.string().default(""),
@@ -844,14 +921,35 @@ export const projectRouter = router({
             if (phase.projectId !== input.projectId) {
                 throw new TRPCError({ code: "BAD_REQUEST", message: "Phase does not belong to project" });
             }
+            assertDateWithinPhaseRange(input.dueDate, phase, "Deliverable");
+            if (input.milestoneId) {
+                const milestone = await ensureMilestoneAccess(ctx, user.orgId, input.milestoneId);
+                if (milestone.projectId !== input.projectId || milestone.phaseId !== input.phaseId) {
+                    throw new TRPCError({ code: "BAD_REQUEST", message: "Milestone does not belong to the selected phase" });
+                }
+            }
+            if (input.assigneeId) {
+                const assignment = await ctx.db.phaseAssignment.findFirst({
+                    where: { phaseId: input.phaseId, userId: input.assigneeId, phase: { project: { orgId: user.orgId } } },
+                    select: { id: true },
+                });
+                if (!assignment) {
+                    throw new TRPCError({ code: "BAD_REQUEST", message: "Assignee must be part of the phase team" });
+                }
+            }
             const count = await ctx.db.deliverable.count({ where: { projectId: input.projectId } });
-            return ctx.db.deliverable.create({
+            const created = await ctx.db.deliverable.create({
                 data: { ...input, sortOrder: count },
                 include: {
                     assignee: { select: { id: true, name: true } },
                     phase: { select: { id: true, name: true } },
+                    milestone: { select: { id: true, name: true, date: true, done: true } },
                 },
             });
+            if (created.milestone?.id) {
+                await ctx.db.milestone.update({ where: { id: created.milestone.id }, data: { done: false } });
+            }
+            return created;
         }),
 
     updateDeliverable: protectedProcedure
@@ -866,25 +964,66 @@ export const projectRouter = router({
         }))
         .mutation(async ({ ctx, input }) => {
             const user = await requireCurrentUser(ctx);
-            const deliverable = await ctx.db.deliverable.findFirst({ where: { id: input.id, project: { orgId: user.orgId } }, select: { id: true } });
+            const deliverable = await ctx.db.deliverable.findFirst({
+                where: { id: input.id, project: { orgId: user.orgId } },
+                select: {
+                    id: true,
+                    phaseId: true,
+                    phase: { select: { startDate: true, endDate: true } },
+                },
+            });
             if (!deliverable) throw new TRPCError({ code: "FORBIDDEN", message: "Deliverable not found or inaccessible" });
+            if (typeof input.assigneeId === "string" && input.assigneeId) {
+                const assignment = await ctx.db.phaseAssignment.findFirst({
+                    where: { phaseId: deliverable.phaseId, userId: input.assigneeId, phase: { project: { orgId: user.orgId } } },
+                    select: { id: true },
+                });
+                if (!assignment) {
+                    throw new TRPCError({ code: "BAD_REQUEST", message: "Assignee must be part of the phase team" });
+                }
+            }
+            if (typeof input.dueDate === "string") {
+                assertDateWithinPhaseRange(input.dueDate, deliverable.phase, "Deliverable");
+            }
             const { id, ...data } = input;
-            return ctx.db.deliverable.update({
+            const updated = await ctx.db.deliverable.update({
                 where: { id },
                 data,
                 include: {
                     assignee: { select: { id: true, name: true } },
                     phase: { select: { id: true, name: true } },
+                    milestone: { select: { id: true, name: true, date: true, done: true } },
                 },
             });
+            if (updated.milestone?.id) {
+                const milestoneDeliverables = await ctx.db.deliverable.findMany({
+                    where: { milestoneId: updated.milestone.id },
+                    select: { status: true },
+                });
+                const milestoneDone = milestoneDeliverables.length > 0 && milestoneDeliverables.every((item) => item.status === "completed" || item.status === "approved");
+                await ctx.db.milestone.update({ where: { id: updated.milestone.id }, data: { done: milestoneDone } });
+            }
+            return updated;
         }),
 
     deleteDeliverable: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
             const user = await requireCurrentUser(ctx);
-            const deliverable = await ctx.db.deliverable.findFirst({ where: { id: input.id, project: { orgId: user.orgId } }, select: { id: true } });
+            const deliverable = await ctx.db.deliverable.findFirst({
+                where: { id: input.id, project: { orgId: user.orgId } },
+                select: { id: true, milestoneId: true },
+            });
             if (!deliverable) throw new TRPCError({ code: "FORBIDDEN", message: "Deliverable not found or inaccessible" });
-            return ctx.db.deliverable.delete({ where: { id: input.id } });
+            const deleted = await ctx.db.deliverable.delete({ where: { id: input.id } });
+            if (deliverable.milestoneId) {
+                const milestoneDeliverables = await ctx.db.deliverable.findMany({
+                    where: { milestoneId: deliverable.milestoneId },
+                    select: { status: true },
+                });
+                const milestoneDone = milestoneDeliverables.length > 0 && milestoneDeliverables.every((item) => item.status === "completed" || item.status === "approved");
+                await ctx.db.milestone.update({ where: { id: deliverable.milestoneId }, data: { done: milestoneDone } });
+            }
+            return deleted;
         }),
 });

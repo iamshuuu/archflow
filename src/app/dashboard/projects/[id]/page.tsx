@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -33,7 +33,7 @@ import {
 import GanttChart from "@/app/components/GanttChart";
 import { useCurrencyFormatter } from "../../useCurrencyFormatter";
 
-/* ─── Types ─── */
+/* â”€â”€â”€ Types â”€â”€â”€ */
 
 interface Phase {
     id: string;
@@ -45,8 +45,8 @@ interface Phase {
     fee: number;
     startDate: string;
     endDate: string;
-    milestones: { id: string; name: string; done: boolean; date: string }[];
-    assignments: { id: string; roleLabel: string; plannedHours: number; user: { id: string; name: string; title: string; billRate: number; costRate: number } }[];
+    milestones: { id: string; name: string; description: string; done: boolean; date: string }[];
+    assignments: { id: string; roleLabel: string; plannedHours: number; billRate: number; user: { id: string; name: string; title: string; billRate: number; costRate: number } }[];
 }
 
 interface ProjectDetail {
@@ -82,16 +82,17 @@ export default function ProjectDetailPage() {
     const [showEditProject, setShowEditProject] = useState(false);
     const [showAddPhase, setShowAddPhase] = useState(false);
     const [showAddFile, setShowAddFile] = useState(false);
-    const [showAddDeliverable, setShowAddDeliverable] = useState(false);
     const [newPhase, setNewPhase] = useState({ name: "", budgetHours: "", budgetAmount: "", feeType: "hourly", startDate: "", endDate: "" });
     const [newFile, setNewFile] = useState({ name: "", url: "", fileType: "other", phaseId: "" });
-    const [newDeliverable, setNewDeliverable] = useState({ title: "", description: "", dueDate: "", phaseId: "", assigneeId: "" });
     const [editForm, setEditForm] = useState({ name: "", type: "", contractValue: "", startDate: "", endDate: "", status: "" });
     const [newTask, setNewTask] = useState({ title: "", phaseId: "", assigneeId: "", dueDate: "" });
     const [budgetDrafts, setBudgetDrafts] = useState<Record<string, { name: string; budgetHours: string; budgetAmount: string; feeType: string; startDate: string; endDate: string }>>({});
     const [savingBudgetPhaseId, setSavingBudgetPhaseId] = useState<string | null>(null);
-    const [milestoneDrafts, setMilestoneDrafts] = useState<Record<string, { name: string; date: string }>>({});
-    const [phaseStaffDrafts, setPhaseStaffDrafts] = useState<Record<string, { userId: string; roleLabel: string; plannedHours: string }>>({});
+    const [milestoneDrafts, setMilestoneDrafts] = useState<Record<string, { name: string; description: string; date: string }>>({});
+    const [phaseStaffDrafts, setPhaseStaffDrafts] = useState<Record<string, { userId: string; roleLabel: string; plannedHours: string; billRate: string }>>({});
+    const [deliverableDrafts, setDeliverableDrafts] = useState<Record<string, { title: string; description: string; dueDate: string; assigneeId: string }>>({});
+    const [editingAssignmentId, setEditingAssignmentId] = useState<string | null>(null);
+    const [assignmentEditDrafts, setAssignmentEditDrafts] = useState<Record<string, { plannedHours: string; billRate: string }>>({});
 
     const utils = trpc.useUtils();
 
@@ -123,16 +124,28 @@ export default function ProjectDetailPage() {
     const updateProject = trpc.project.update.useMutation({ onSuccess: () => { utils.project.getById.invalidate(); setShowEditProject(false); } });
     const addFileMut = trpc.project.addFile.useMutation({ onSuccess: () => { utils.project.listFiles.invalidate(); setNewFile({ name: "", url: "", fileType: "other", phaseId: "" }); setShowAddFile(false); } });
     const deleteFileMut = trpc.project.deleteFile.useMutation({ onSuccess: () => utils.project.listFiles.invalidate() });
-    const createDeliverableMut = trpc.project.createDeliverable.useMutation({ onSuccess: () => { utils.project.listDeliverables.invalidate(); setNewDeliverable({ title: "", description: "", dueDate: "", phaseId: "", assigneeId: "" }); setShowAddDeliverable(false); } });
-    const updateDeliverableMut = trpc.project.updateDeliverable.useMutation({ onSuccess: () => utils.project.listDeliverables.invalidate() });
-    const deleteDeliverableMut = trpc.project.deleteDeliverable.useMutation({ onSuccess: () => utils.project.listDeliverables.invalidate() });
-    const addMilestoneMut = trpc.project.addMilestone.useMutation({
+    const createDeliverableMut = trpc.project.createDeliverable.useMutation({
         onSuccess: () => {
+            utils.project.listDeliverables.invalidate();
             utils.project.getById.invalidate();
             utils.project.schedule.invalidate();
         },
     });
-    const updateMilestoneMut = trpc.project.updateMilestone.useMutation({
+    const updateDeliverableMut = trpc.project.updateDeliverable.useMutation({
+        onSuccess: () => {
+            utils.project.listDeliverables.invalidate();
+            utils.project.getById.invalidate();
+            utils.project.schedule.invalidate();
+        },
+    });
+    const deleteDeliverableMut = trpc.project.deleteDeliverable.useMutation({
+        onSuccess: () => {
+            utils.project.listDeliverables.invalidate();
+            utils.project.getById.invalidate();
+            utils.project.schedule.invalidate();
+        },
+    });
+    const addMilestoneMut = trpc.project.addMilestone.useMutation({
         onSuccess: () => {
             utils.project.getById.invalidate();
             utils.project.schedule.invalidate();
@@ -146,6 +159,12 @@ export default function ProjectDetailPage() {
     });
     const assignPhaseMemberMut = trpc.project.assignPhaseMember.useMutation({
         onSuccess: () => utils.project.getById.invalidate(),
+    });
+    const updatePhaseAssignmentMut = trpc.project.updatePhaseAssignment.useMutation({
+        onSuccess: () => {
+            utils.project.getById.invalidate();
+            setEditingAssignmentId(null);
+        },
     });
     const removePhaseAssignmentMut = trpc.project.removePhaseAssignment.useMutation({
         onSuccess: () => utils.project.getById.invalidate(),
@@ -163,18 +182,22 @@ export default function ProjectDetailPage() {
     const project: ProjectDetail | null = useMemo(() => rawProject ? {
         id: rawProject.id,
         name: rawProject.name,
-        client: (rawProject as any).client?.name || "—",
+        client: (rawProject as any).client?.name || "-",
         type: (rawProject as any).type || "Commercial",
         status: rawProject.status,
         contractValue: (rawProject as any).contractValue || 0,
-        startDate: (rawProject as any).startDate || "—",
-        endDate: (rawProject as any).endDate || "—",
+        startDate: (rawProject as any).startDate || "-",
+        endDate: (rawProject as any).endDate || "-",
         description: (rawProject as any).description || "",
         team: [],
         phases: ((rawProject as any).phases || []).map((p: any, i: number, arr: any[]) => {
             const totalHours = (p.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
             const budgetHours = p.budgetHours || 0;
-            const progress = budgetHours > 0 ? Math.min(100, Math.round((totalHours / budgetHours) * 100)) : 0;
+            const milestoneCount = (p.milestones || []).length;
+            const completedMilestones = (p.milestones || []).filter((ms: any) => ms.done).length;
+            const progress = milestoneCount > 0
+                ? Math.round((completedMilestones / milestoneCount) * 100)
+                : budgetHours > 0 ? Math.min(100, Math.round((totalHours / budgetHours) * 100)) : 0;
             const isComplete = progress >= 100;
             return {
                 id: p.id,
@@ -182,17 +205,23 @@ export default function ProjectDetailPage() {
                 status: isComplete ? "completed" as const : (i === 0 || arr.slice(0, i).every((prev: any) => {
                     const prevHrs = (prev.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
                     const prevBudget = prev.budgetHours || 0;
+                    const prevMilestoneCount = (prev.milestones || []).length;
+                    if (prevMilestoneCount > 0) {
+                        const prevCompletedMilestones = (prev.milestones || []).filter((milestone: any) => milestone.done).length;
+                        return prevCompletedMilestones >= prevMilestoneCount;
+                    }
                     return prevBudget > 0 ? prevHrs >= prevBudget : true;
                 })) ? "active" as const : "upcoming" as const,
                 progress,
                 budgetHours,
                 usedHours: totalHours,
                 fee: typeof p.budgetAmount === "number" ? p.budgetAmount : 0,
-                startDate: p.startDate || "—",
-                endDate: p.endDate || "—",
+                startDate: p.startDate || "-",
+                endDate: p.endDate || "-",
                 milestones: (p.milestones || []).map((ms: any) => ({
                     id: ms.id || `${p.id}-ms-${ms.name || "milestone"}-${ms.date || "date"}`,
                     name: ms.name,
+                    description: ms.description || "",
                     done: ms.done,
                     date: ms.date,
                 })),
@@ -200,6 +229,7 @@ export default function ProjectDetailPage() {
                     id: assignment.id,
                     roleLabel: assignment.roleLabel || "",
                     plannedHours: assignment.plannedHours || 0,
+                    billRate: assignment.billRate || assignment.user?.billRate || 0,
                     user: {
                         id: assignment.user?.id || "",
                         name: assignment.user?.name || "Unknown",
@@ -233,15 +263,29 @@ export default function ProjectDetailPage() {
 
     useEffect(() => {
         if (!project) return;
-        setMilestoneDrafts(Object.fromEntries(project.phases.map((phase) => [phase.id, { name: "", date: "" }])));
-        setPhaseStaffDrafts(Object.fromEntries(project.phases.map((phase) => [phase.id, { userId: "", roleLabel: "", plannedHours: "" }])));
+        setMilestoneDrafts(Object.fromEntries(project.phases.map((phase) => [phase.id, { name: "", description: "", date: "" }])));
+        setPhaseStaffDrafts(Object.fromEntries(project.phases.map((phase) => [phase.id, { userId: "", roleLabel: "", plannedHours: "", billRate: "" }])));
+        setDeliverableDrafts(
+            Object.fromEntries(
+                project.phases.flatMap((phase) =>
+                    phase.milestones.map((milestone) => [milestone.id, { title: "", description: "", dueDate: "", assigneeId: "" }]),
+                ),
+            ),
+        );
+        setAssignmentEditDrafts(
+            Object.fromEntries(
+                project.phases.flatMap((phase) =>
+                    phase.assignments.map((assignment) => [assignment.id, { plannedHours: String(assignment.plannedHours || 0), billRate: String(assignment.billRate || 0) }]),
+                ),
+            ),
+        );
     }, [project]);
 
     if (isLoading) {
         return (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "400px", gap: "12px", color: "var(--text-muted)" }}>
                 <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
-                <span style={{ fontSize: "14px", fontWeight: 300 }}>Loading project…</span>
+                <span style={{ fontSize: "14px", fontWeight: 300 }}>Loading project...</span>
                 <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
             </div>
         );
@@ -252,7 +296,7 @@ export default function ProjectDetailPage() {
             <div style={{ textAlign: "center", padding: "60px 0" }}>
                 <p style={{ fontSize: "16px", color: "var(--text-muted)", fontWeight: 300 }}>Project not found.</p>
                 <Link href="/dashboard/projects" style={{ marginTop: "16px", display: "inline-block", fontSize: "13px", color: "var(--accent-primary)", textDecoration: "none" }}>
-                    ← Back to Projects
+                    {"<- Back to Projects"}
                 </Link>
             </div>
         );
@@ -274,12 +318,22 @@ export default function ProjectDetailPage() {
     const overdueDeliverables = deliverableRows.filter((d) => !["completed", "approved"].includes(d.status) && d.dueDate && d.dueDate < todayIso).length;
     const dueSoonDeliverables = deliverableRows.filter((d) => !["completed", "approved"].includes(d.status) && d.dueDate && d.dueDate >= todayIso && d.dueDate <= sevenDaysIso).length;
     const totalMilestones = project.phases.reduce((sum, phase) => sum + phase.milestones.length, 0);
+    const completedMilestones = project.phases.reduce((sum, phase) => sum + phase.milestones.filter((milestone) => milestone.done).length, 0);
     const totalAssignedMembers = new Set(project.phases.flatMap((phase) => phase.assignments.map((assignment) => assignment.user.id))).size;
     const unstaffedPhases = project.phases.filter((phase) => phase.assignments.length === 0).length;
-    const phasesWithoutMilestones = project.phases.filter((phase) => phase.milestones.length === 0).length;
-    const upcomingMilestones = project.phases
-        .flatMap((ph) => ph.milestones)
-        .filter((ms) => !ms.done && ms.date && ms.date >= todayIso && ms.date <= sevenDaysIso).length;
+    const milestoneCompletionPct = totalMilestones > 0 ? Math.round((completedMilestones / totalMilestones) * 100) : 0;
+    const deliverablesWithoutMilestone = deliverableRows.filter((deliverable) => !deliverable.milestoneId).length;
+    const phaseDeliveryBoards = project.phases.map((phase) => {
+        const milestoneBoards = phase.milestones.map((milestone) => ({
+            ...milestone,
+            deliverables: deliverableRows.filter((deliverable) => deliverable.milestoneId === milestone.id),
+        }));
+        return {
+            ...phase,
+            milestoneBoards,
+            unlinkedDeliverables: deliverableRows.filter((deliverable) => deliverable.phaseId === phase.id && !deliverable.milestoneId),
+        };
+    });
     const budgetSummary = budgetData?.summary;
     const budgetFinances = budgetData?.finances;
     const budgetForecast = budgetData?.forecast;
@@ -305,16 +359,23 @@ export default function ProjectDetailPage() {
         return <span key={label} style={{ fontSize: "10px", fontWeight: 600, color, background: bg, padding: "4px 8px", borderRadius: "999px", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}: {level}</span>;
     };
     const getInitials = (name: string) => name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("") || "?";
+    const asInputDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+    const formatDateRange = (start: string, end: string) => {
+        const startLabel = asInputDate(start) || start;
+        const endLabel = asInputDate(end) || end;
+        if (startLabel && endLabel && startLabel !== "-" && endLabel !== "-") return `${startLabel} - ${endLabel}`;
+        return startLabel && startLabel !== "-" ? startLabel : endLabel && endLabel !== "-" ? endLabel : "No dates set";
+    };
 
     const handleGanttPhaseUpdate = async (phaseId: string, startDate: string, endDate: string) => {
         await updatePhaseMut.mutateAsync({ id: phaseId, startDate, endDate });
     };
 
-    const updateMilestoneDraft = (phaseId: string, field: "name" | "date", value: string) => {
+    const updateMilestoneDraft = (phaseId: string, field: "name" | "description" | "date", value: string) => {
         setMilestoneDrafts((prev) => ({
             ...prev,
             [phaseId]: {
-                ...(prev[phaseId] || { name: "", date: "" }),
+                ...(prev[phaseId] || { name: "", description: "", date: "" }),
                 [field]: value,
             },
         }));
@@ -323,19 +384,60 @@ export default function ProjectDetailPage() {
     const addPhaseMilestone = async (phaseId: string) => {
         const draft = milestoneDrafts[phaseId];
         if (!draft?.name || !draft?.date) return;
-        await addMilestoneMut.mutateAsync({ projectId, phaseId, name: draft.name, date: draft.date });
+        await addMilestoneMut.mutateAsync({ projectId, phaseId, name: draft.name, description: draft.description, date: draft.date });
         setMilestoneDrafts((prev) => ({
             ...prev,
-            [phaseId]: { name: "", date: "" },
+            [phaseId]: { name: "", description: "", date: "" },
         }));
     };
 
-    const updatePhaseStaffDraft = (phaseId: string, field: "userId" | "roleLabel" | "plannedHours", value: string) => {
+    const updateDeliverableDraft = (milestoneId: string, field: "title" | "description" | "dueDate" | "assigneeId", value: string) => {
+        setDeliverableDrafts((prev) => ({
+            ...prev,
+            [milestoneId]: {
+                ...(prev[milestoneId] || { title: "", description: "", dueDate: "", assigneeId: "" }),
+                [field]: value,
+            },
+        }));
+    };
+
+    const addMilestoneDeliverable = async (phaseId: string, milestoneId: string) => {
+        const draft = deliverableDrafts[milestoneId];
+        if (!draft?.title) return;
+        await createDeliverableMut.mutateAsync({
+            projectId,
+            phaseId,
+            milestoneId,
+            title: draft.title,
+            description: draft.description,
+            dueDate: draft.dueDate,
+            assigneeId: draft.assigneeId || undefined,
+        });
+        setDeliverableDrafts((prev) => ({
+            ...prev,
+            [milestoneId]: { title: "", description: "", dueDate: "", assigneeId: "" },
+        }));
+    };
+
+    const updatePhaseStaffDraft = (phaseId: string, field: "userId" | "roleLabel" | "plannedHours" | "billRate", value: string) => {
         setPhaseStaffDrafts((prev) => ({
             ...prev,
             [phaseId]: {
-                ...(prev[phaseId] || { userId: "", roleLabel: "", plannedHours: "" }),
+                ...(prev[phaseId] || { userId: "", roleLabel: "", plannedHours: "", billRate: "" }),
                 [field]: value,
+            },
+        }));
+    };
+
+    const handlePhaseStaffMemberSelect = (phaseId: string, userId: string) => {
+        const selectedMember = (teamMembers as any[]).find((member: any) => member.id === userId);
+        setPhaseStaffDrafts((prev) => ({
+            ...prev,
+            [phaseId]: {
+                userId,
+                roleLabel: selectedMember?.title || prev[phaseId]?.roleLabel || "",
+                plannedHours: prev[phaseId]?.plannedHours || "",
+                billRate: selectedMember ? String(selectedMember.billRate ?? 0) : prev[phaseId]?.billRate || "",
             },
         }));
     };
@@ -348,11 +450,33 @@ export default function ProjectDetailPage() {
             userId: draft.userId,
             roleLabel: draft.roleLabel,
             plannedHours: Number(draft.plannedHours || 0),
+            billRate: Number(draft.billRate || 0),
         });
         setPhaseStaffDrafts((prev) => ({
             ...prev,
-            [phaseId]: { userId: "", roleLabel: "", plannedHours: "" },
+            [phaseId]: { userId: "", roleLabel: "", plannedHours: "", billRate: "" },
         }));
+    };
+
+    const updateAssignmentEditDraft = (assignmentId: string, field: "plannedHours" | "billRate", value: string) => {
+        setAssignmentEditDrafts((prev) => ({
+            ...prev,
+            [assignmentId]: {
+                ...(prev[assignmentId] || { plannedHours: "", billRate: "" }),
+                [field]: value,
+            },
+        }));
+    };
+
+    const saveAssignmentEdit = async (assignmentId: string, roleLabel: string) => {
+        const draft = assignmentEditDrafts[assignmentId];
+        if (!draft) return;
+        await updatePhaseAssignmentMut.mutateAsync({
+            id: assignmentId,
+            roleLabel,
+            plannedHours: Number(draft.plannedHours || 0),
+            billRate: Number(draft.billRate || 0),
+        });
     };
 
     const updateBudgetDraft = (phaseId: string, field: "name" | "budgetHours" | "budgetAmount" | "feeType" | "startDate" | "endDate", value: string) => {
@@ -422,11 +546,11 @@ export default function ProjectDetailPage() {
                             {project.name}
                         </h1>
                         <p style={{ marginTop: "4px", fontSize: "13px", color: "var(--text-tertiary)", fontWeight: 300 }}>
-                            {project.client} · {project.type}
+                            {project.client} | {project.type}
                         </p>
                     </div>
                     <div style={{ display: "flex", gap: "8px" }}>
-                        <button onClick={() => { setEditForm({ name: project.name, type: project.type, contractValue: String(project.contractValue), startDate: project.startDate === "—" ? "" : project.startDate, endDate: project.endDate === "—" ? "" : project.endDate, status: project.status }); setShowEditProject(true); }} style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-secondary)" }}>
+                        <button onClick={() => { setEditForm({ name: project.name, type: project.type, contractValue: String(project.contractValue), startDate: project.startDate === "-" ? "" : project.startDate, endDate: project.endDate === "-" ? "" : project.endDate, status: project.status }); setShowEditProject(true); }} style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-secondary)" }}>
                             <Edit3 size={13} /> Edit
                         </button>
                         <button style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "white", fontWeight: 500 }}>
@@ -485,7 +609,7 @@ export default function ProjectDetailPage() {
                     {/* Phases */}
                     <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                            <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Phases & Milestones</h3>
+                            <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Phases</h3>
                             <button onClick={() => setShowAddPhase(true)} style={{ padding: "6px 12px", borderRadius: "4px", border: "1px solid var(--border-primary)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
                                 <Plus size={12} /> Add Phase
                             </button>
@@ -553,7 +677,7 @@ export default function ProjectDetailPage() {
                                                         </div>
                                                         <div>
                                                             <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Dates</span>
-                                                            <p style={{ fontWeight: 500, marginTop: "2px" }}>{phase.startDate} — {phase.endDate}</p>
+                                                            <p style={{ fontWeight: 500, marginTop: "2px" }}>{formatDateRange(phase.startDate, phase.endDate)}</p>
                                                         </div>
                                                         <div>
                                                             <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Progress</span>
@@ -563,76 +687,19 @@ export default function ProjectDetailPage() {
                                                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "14px" }}>
                                                         <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
                                                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Milestones</p>
-                                                                <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{phase.milestones.length} total</span>
-                                                            </div>
-                                                            {phase.milestones.length === 0 ? (
-                                                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px" }}>No milestones yet. Add key approvals, submissions, or deadlines for this phase.</p>
-                                                            ) : (
-                                                                <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
-                                                                    {phase.milestones.map((ms) => (
-                                                                        <div key={ms.id} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", borderRadius: "6px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
-                                                                            <button
-                                                                                onClick={() => updateMilestoneMut.mutate({ id: ms.id, done: !ms.done })}
-                                                                                style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center" }}
-                                                                            >
-                                                                                {ms.done ? <CheckCircle2 size={14} style={{ color: "var(--success)" }} /> : <div style={{ width: "14px", height: "14px", borderRadius: "50%", border: "1.5px solid var(--border-secondary)" }} />}
-                                                                            </button>
-                                                                            <div style={{ flex: 1 }}>
-                                                                                <p style={{ fontSize: "11px", color: "var(--text-primary)", textDecoration: ms.done ? "line-through" : "none" }}>{ms.name}</p>
-                                                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>{ms.date || "No date"}</p>
-                                                                            </div>
-                                                                            <button
-                                                                                onClick={() => deleteMilestoneMut.mutate({ id: ms.id })}
-                                                                                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "2px" }}
-                                                                            >
-                                                                                <Trash2 size={12} />
-                                                                            </button>
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            )}
-                                                            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr auto", gap: "8px", alignItems: "end" }}>
-                                                                <div>
-                                                                    <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Milestone</label>
-                                                                    <input
-                                                                        type="text"
-                                                                        value={milestoneDrafts[phase.id]?.name || ""}
-                                                                        onChange={(e) => updateMilestoneDraft(phase.id, "name", e.target.value)}
-                                                                        placeholder="Concept sign-off"
-                                                                        style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none" }}
-                                                                    />
-                                                                </div>
-                                                                <div>
-                                                                    <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Date</label>
-                                                                    <input
-                                                                        type="date"
-                                                                        value={milestoneDrafts[phase.id]?.date || ""}
-                                                                        onChange={(e) => updateMilestoneDraft(phase.id, "date", e.target.value)}
-                                                                        style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }}
-                                                                    />
-                                                                </div>
-                                                                <button
-                                                                    onClick={() => addPhaseMilestone(phase.id)}
-                                                                    disabled={!milestoneDrafts[phase.id]?.name || !milestoneDrafts[phase.id]?.date || addMilestoneMut.isPending}
-                                                                    style={{ padding: "8px 12px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !milestoneDrafts[phase.id]?.name || !milestoneDrafts[phase.id]?.date ? 0.5 : 1 }}
-                                                                >
-                                                                    Add
-                                                                </button>
-                                                            </div>
-                                                        </div>
-
-                                                        <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
-                                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
                                                                 <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Phase Team</p>
                                                                 <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{phase.assignments.length} assigned</span>
                                                             </div>
+                                                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px" }}>
+                                                                Milestones and deliverables now live in the Deliverables tab so phase planning stays tied to execution.
+                                                            </p>
                                                             {phase.assignments.length === 0 ? (
                                                                 <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px" }}>No team assigned yet. Add people so this phase has clear ownership.</p>
                                                             ) : (
                                                                 <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
                                                                     {phase.assignments.map((assignment) => (
-                                                                        <div key={assignment.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "8px 10px", borderRadius: "6px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
+                                                                        <div key={assignment.id} style={{ padding: "10px", borderRadius: "6px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
+                                                                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                                                                             <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: "rgba(176,122,74,0.14)", color: "var(--accent-primary)", display: "grid", placeItems: "center", fontSize: "10px", fontWeight: 600 }}>
                                                                                 {getInitials(assignment.user.name)}
                                                                             </div>
@@ -640,15 +707,61 @@ export default function ProjectDetailPage() {
                                                                                 <p style={{ fontSize: "11px", color: "var(--text-primary)", fontWeight: 500 }}>{assignment.user.name}</p>
                                                                                 <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>
                                                                                     {assignment.roleLabel || assignment.user.title || "Team member"}
-                                                                                    {assignment.plannedHours > 0 ? ` · ${assignment.plannedHours}h planned` : ""}
                                                                                 </p>
+                                                                                <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginTop: "6px" }}>
+                                                                                    <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Rate: {formatCurrency(assignment.billRate)}/hr</span>
+                                                                                    <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Assigned: {assignment.plannedHours}h</span>
+                                                                                    <span style={{ fontSize: "10px", color: "var(--text-primary)", fontWeight: 500 }}>Estimate: {formatCurrency(assignment.billRate * assignment.plannedHours)}</span>
+                                                                                </div>
                                                                             </div>
-                                                                            <button
-                                                                                onClick={() => removePhaseAssignmentMut.mutate({ id: assignment.id })}
-                                                                                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "2px" }}
-                                                                            >
-                                                                                <X size={12} />
-                                                                            </button>
+                                                                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                                                                <button
+                                                                                    onClick={() => setEditingAssignmentId(editingAssignmentId === assignment.id ? null : assignment.id)}
+                                                                                    style={{ border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-secondary)", borderRadius: "6px", padding: "6px 8px", cursor: "pointer", fontSize: "10px" }}
+                                                                                >
+                                                                                    Edit
+                                                                                </button>
+                                                                                <button
+                                                                                    onClick={() => removePhaseAssignmentMut.mutate({ id: assignment.id })}
+                                                                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "2px" }}
+                                                                                >
+                                                                                    <X size={12} />
+                                                                                </button>
+                                                                            </div>
+                                                                            </div>
+                                                                            {editingAssignmentId === assignment.id && (
+                                                                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: "8px", marginTop: "10px", paddingTop: "10px", borderTop: "1px solid var(--border-primary)" }}>
+                                                                                    <div>
+                                                                                        <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Assigned Hrs</label>
+                                                                                        <input
+                                                                                            type="number"
+                                                                                            min="0"
+                                                                                            step="1"
+                                                                                            value={assignmentEditDrafts[assignment.id]?.plannedHours || ""}
+                                                                                            onChange={(e) => updateAssignmentEditDraft(assignment.id, "plannedHours", e.target.value)}
+                                                                                            style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }}
+                                                                                        />
+                                                                                    </div>
+                                                                                    <div>
+                                                                                        <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Bill Rate</label>
+                                                                                        <input
+                                                                                            type="number"
+                                                                                            min="0"
+                                                                                            step="1"
+                                                                                            value={assignmentEditDrafts[assignment.id]?.billRate || ""}
+                                                                                            onChange={(e) => updateAssignmentEditDraft(assignment.id, "billRate", e.target.value)}
+                                                                                            style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }}
+                                                                                        />
+                                                                                    </div>
+                                                                                    <button
+                                                                                        onClick={() => saveAssignmentEdit(assignment.id, assignment.roleLabel || assignment.user.title || "")}
+                                                                                        disabled={updatePhaseAssignmentMut.isPending}
+                                                                                        style={{ alignSelf: "end", padding: "8px 12px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer" }}
+                                                                                    >
+                                                                                        Save
+                                                                                    </button>
+                                                                                </div>
+                                                                            )}
                                                                         </div>
                                                                     ))}
                                                                 </div>
@@ -658,7 +771,7 @@ export default function ProjectDetailPage() {
                                                                     <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Team Member</label>
                                                                     <select
                                                                         value={phaseStaffDrafts[phase.id]?.userId || ""}
-                                                                        onChange={(e) => updatePhaseStaffDraft(phase.id, "userId", e.target.value)}
+                                                                        onChange={(e) => handlePhaseStaffMemberSelect(phase.id, e.target.value)}
                                                                         style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}
                                                                     >
                                                                         <option value="">Select team member...</option>
@@ -771,8 +884,8 @@ export default function ProjectDetailPage() {
                                     <p style={{ fontSize: "15px", fontWeight: 500, color: "var(--text-primary)" }}>{totalAssignedMembers}</p>
                                 </div>
                                 <div style={{ padding: "10px 12px", borderRadius: "8px", background: "var(--bg-secondary)" }}>
-                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Milestones</p>
-                                    <p style={{ fontSize: "15px", fontWeight: 500, color: "var(--text-primary)" }}>{totalMilestones}</p>
+                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Coverage</p>
+                                    <p style={{ fontSize: "15px", fontWeight: 500, color: "var(--text-primary)" }}>{project.phases.length - unstaffedPhases} / {project.phases.length}</p>
                                 </div>
                             </div>
                         </div>
@@ -809,9 +922,8 @@ export default function ProjectDetailPage() {
                                     { label: "Unassigned open tasks", value: unassignedTasks, critical: unassignedTasks > 0 },
                                     { label: "Overdue deliverables", value: overdueDeliverables, critical: overdueDeliverables > 0 },
                                     { label: "Deliverables due in 7 days", value: dueSoonDeliverables, critical: false },
-                                    { label: "Upcoming milestones (7d)", value: upcomingMilestones, critical: false },
                                     { label: "Phases without team", value: unstaffedPhases, critical: unstaffedPhases > 0 },
-                                    { label: "Phases without milestones", value: phasesWithoutMilestones, critical: phasesWithoutMilestones > 0 },
+                                    { label: "Milestones tracked", value: totalMilestones, critical: false },
                                 ].map((item) => (
                                     <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", color: "var(--text-secondary)" }}>
                                         <span>{item.label}</span>
@@ -861,7 +973,7 @@ export default function ProjectDetailPage() {
                         <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Project Expenses</h3>
                         <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                             {(projectExpenses as any[]).length} expense{(projectExpenses as any[]).length !== 1 ? "s" : ""}
-                            {" · "}
+                            {" | "}
                             {formatCurrency((projectExpenses as any[]).reduce((s: number, e: any) => s + e.amount, 0))}
                         </span>
                     </div>
@@ -902,7 +1014,7 @@ export default function ProjectDetailPage() {
                     <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div>
                             <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Tasks</h3>
-                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>{(tasks as any[]).length} tasks · {(tasks as any[]).filter((t: any) => t.status === "done").length} completed</p>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>{(tasks as any[]).length} tasks | {(tasks as any[]).filter((t: any) => t.status === "done").length} completed</p>
                         </div>
                         <button onClick={() => setShowNewTask(!showNewTask)}
                             style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer" }}>
@@ -974,7 +1086,7 @@ export default function ProjectDetailPage() {
                                                 </button>
                                             </td>
                                             <td style={{ padding: "10px 14px", fontSize: "12px", fontWeight: 500, color: task.status === "done" ? "var(--text-muted)" : "var(--text-primary)", textDecoration: task.status === "done" ? "line-through" : "none" }}>{task.title}</td>
-                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{task.phase?.name || "—"}</td>
+                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{task.phase?.name || "-"}</td>
                                             <td style={{ padding: "10px 14px" }}>
                                                 {task.assignee ? (
                                                     <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "10px", background: "rgba(176,122,74,0.08)", color: "var(--accent-primary)", fontWeight: 500 }}>{task.assignee.name}</span>
@@ -982,7 +1094,7 @@ export default function ProjectDetailPage() {
                                                     <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>Unassigned</span>
                                                 )}
                                             </td>
-                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{task.dueDate || "—"}</td>
+                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{task.dueDate || "-"}</td>
                                             <td style={{ padding: "10px 14px" }}>
                                                 <button onClick={() => deleteTask.mutate({ id: task.id })}
                                                     style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}
@@ -1071,7 +1183,7 @@ export default function ProjectDetailPage() {
                                                 <p style={{ fontSize: "14px", color: "var(--text-primary)", fontWeight: 500 }}>{phase.name}</p>
                                                 <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
                                                     {phase.status === "over-budget" ? "Over budget" : phase.status === "at-risk" ? "At risk" : phase.status === "active" ? "Active" : phase.status === "complete" ? "Complete" : "Planned"}
-                                                    {phase.projectedBurnPct ? ` · Forecast ${phase.projectedBurnPct}% burn` : ""}
+                                                    {phase.projectedBurnPct ? ` | Forecast ${phase.projectedBurnPct}% burn` : ""}
                                                 </p>
                                             </div>
                                             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
@@ -1125,7 +1237,7 @@ export default function ProjectDetailPage() {
                                                 { label: "Recent 30 Days", value: `${phase.recentHours}h`, meta: "Current burn pace" },
                                                 { label: "Labor Cost", value: formatCurrency(phase.laborCost), meta: `Avg ${formatCurrency(phase.avgCostRate)}/h` },
                                                 { label: "Billable Value", value: formatCurrency(phase.billableValue), meta: `Avg ${formatCurrency(phase.avgBillRate)}/h` },
-                                                { label: "Budget Rate", value: draft.budgetHours && Number(draft.budgetHours) > 0 ? formatCurrency(Number(draft.budgetAmount || 0) / Number(draft.budgetHours || 1)) : "—", meta: "Fee per budgeted hour" },
+                                                { label: "Budget Rate", value: draft.budgetHours && Number(draft.budgetHours) > 0 ? formatCurrency(Number(draft.budgetAmount || 0) / Number(draft.budgetHours || 1)) : "-", meta: "Fee per budgeted hour" },
                                                 { label: "Planned Progress", value: `${phase.plannedProgress}%`, meta: `Actual ${phase.actualProgress}%` },
                                             ].map((metric) => (
                                                 <div key={metric.label} style={{ padding: "12px", borderRadius: "8px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
@@ -1233,69 +1345,277 @@ export default function ProjectDetailPage() {
                     </div>
                 </div>
             )}
-
             {/* Deliverables tab */}
             {activeTab === "deliverables" && (
-                <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
-                    <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div>
-                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Deliverables</h3>
-                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>{(deliverables as any[]).length} deliverables · {(deliverables as any[]).filter((d: any) => d.status === "completed" || d.status === "approved").length} completed</p>
-                        </div>
-                        <button onClick={() => setShowAddDeliverable(!showAddDeliverable)} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer" }}><Plus size={13} /> Add</button>
-                    </div>
-                    {showAddDeliverable && (
-                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
-                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end" }}>
-                                <div style={{ flex: 2, minWidth: "160px" }}>
-                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Title *</label>
-                                    <input type="text" value={newDeliverable.title} onChange={(e) => setNewDeliverable(p => ({ ...p, title: e.target.value }))} placeholder="Deliverable title" style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
-                                </div>
-                                <div style={{ flex: 1, minWidth: "120px" }}>
-                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Phase *</label>
-                                    <select value={newDeliverable.phaseId} onChange={(e) => setNewDeliverable(p => ({ ...p, phaseId: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
-                                        <option value="">Select phase...</option>
-                                        {project.phases.map((ph: any) => <option key={ph.id} value={ph.id}>{ph.name}</option>)}
-                                    </select>
-                                </div>
-                                <div style={{ flex: 1, minWidth: "120px" }}>
-                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Due Date</label>
-                                    <input type="date" value={newDeliverable.dueDate} onChange={(e) => setNewDeliverable(p => ({ ...p, dueDate: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
-                                </div>
-                                <button onClick={() => { if (!newDeliverable.title || !newDeliverable.phaseId) return; createDeliverableMut.mutate({ projectId, phaseId: newDeliverable.phaseId, title: newDeliverable.title, description: newDeliverable.description, dueDate: newDeliverable.dueDate, assigneeId: newDeliverable.assigneeId || undefined }); }}
-                                    disabled={!newDeliverable.title || !newDeliverable.phaseId} style={{ padding: "8px 16px", borderRadius: "5px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !newDeliverable.title || !newDeliverable.phaseId ? 0.5 : 1, whiteSpace: "nowrap" }}>Add</button>
+                <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <div style={{ padding: "20px 22px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", flexWrap: "wrap" }}>
+                            <div>
+                                <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Deliverables & Milestones</h3>
+                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: 1.6 }}>
+                                    Milestones are now managed here, inside each phase. Deliverables roll up into milestone completion, and milestone completion drives phase progress.
+                                </p>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(120px, 1fr))", gap: "10px", flex: 1, minWidth: "420px" }}>
+                                {[
+                                    { label: "Milestones", value: totalMilestones },
+                                    { label: "Completed", value: completedMilestones },
+                                    { label: "Completion", value: `${milestoneCompletionPct}%` },
+                                    { label: "Ungrouped", value: deliverablesWithoutMilestone },
+                                ].map((item) => (
+                                    <div key={item.label} style={{ padding: "12px 14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                        <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>{item.label}</p>
+                                        <p style={{ fontSize: "18px", fontWeight: 500, color: "var(--text-primary)" }}>{item.value}</p>
+                                    </div>
+                                ))}
                             </div>
                         </div>
-                    )}
-                    {(deliverables as any[]).length === 0 ? (
-                        <div style={{ padding: "40px", textAlign: "center" }}><Package size={24} style={{ color: "var(--text-muted)", marginBottom: "8px" }} /><p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No deliverables yet.</p></div>
-                    ) : (
-                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                            <thead><tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
-                                {["Status", "Deliverable", "Phase", "Assignee", "Due Date", ""].map(h => <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>)}
-                            </tr></thead>
-                            <tbody>
-                                {(deliverables as any[]).map((d: any) => {
-                                    const dsc: Record<string, { label: string; color: string; bg: string }> = { pending: { label: "Pending", color: "var(--text-muted)", bg: "var(--bg-secondary)" }, "in-progress": { label: "In Progress", color: "var(--info)", bg: "rgba(90,122,144,0.08)" }, completed: { label: "Completed", color: "var(--success)", bg: "rgba(90,122,70,0.08)" }, approved: { label: "Approved", color: "var(--accent-primary)", bg: "rgba(176,122,74,0.08)" } };
-                                    const ds = dsc[d.status] || dsc.pending;
-                                    const statusCycle = ["pending", "in-progress", "completed", "approved"] as const;
-                                    return (
-                                        <tr key={d.id} style={{ borderBottom: "1px solid var(--border-primary)" }} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
-                                            <td style={{ padding: "10px 14px" }}>
-                                                <button onClick={() => { const idx = statusCycle.indexOf(d.status); const next = statusCycle[(idx + 1) % statusCycle.length]; updateDeliverableMut.mutate({ id: d.id, status: next, completedDate: next === "completed" || next === "approved" ? new Date().toISOString().slice(0, 10) : "" }); }}
-                                                    style={{ border: "none", cursor: "pointer", color: ds.color, display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", background: ds.bg }}>{ds.label}</button>
-                                            </td>
-                                            <td style={{ padding: "10px 14px", fontSize: "12px", fontWeight: 500, color: d.status === "approved" ? "var(--text-muted)" : "var(--text-primary)", textDecoration: d.status === "approved" ? "line-through" : "none" }}>{d.title}</td>
-                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{d.phase?.name || "—"}</td>
-                                            <td style={{ padding: "10px 14px" }}>{d.assignee ? <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "10px", background: "rgba(176,122,74,0.08)", color: "var(--accent-primary)", fontWeight: 500 }}>{d.assignee.name}</span> : <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>—</span>}</td>
-                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{d.dueDate || "—"}</td>
-                                            <td style={{ padding: "10px 14px" }}><button onClick={() => deleteDeliverableMut.mutate({ id: d.id })} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }} onMouseEnter={(e) => { e.currentTarget.style.color = "var(--danger)"; }} onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}><Trash2 size={13} /></button></td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    )}
+                    </div>
+
+                    {phaseDeliveryBoards.map((phase) => {
+                        const availableMembers = phase.assignments.map((assignment) => assignment.user);
+                        return (
+                            <div key={phase.id} style={{ padding: "22px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", marginBottom: "18px", flexWrap: "wrap" }}>
+                                    <div>
+                                        <h3 style={{ fontSize: "16px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{phase.name}</h3>
+                                        <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                                            {phase.milestoneBoards.length} milestone{phase.milestoneBoards.length !== 1 ? "s" : ""} | {phase.milestoneBoards.reduce((sum, milestone) => sum + milestone.deliverables.length, 0)} deliverable{phase.milestoneBoards.reduce((sum, milestone) => sum + milestone.deliverables.length, 0) !== 1 ? "s" : ""}
+                                        </p>
+                                        <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>Phase duration: {formatDateRange(phase.startDate, phase.endDate)}</p>
+                                    </div>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+                                        {availableMembers.length === 0 ? (
+                                            <span style={{ fontSize: "11px", color: "var(--warning)", background: "rgba(176,138,48,0.08)", borderRadius: "999px", padding: "6px 10px" }}>Assign a phase team before assigning deliverables.</span>
+                                        ) : (
+                                            availableMembers.map((member) => (
+                                                <span key={member.id} style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 8px", borderRadius: "999px", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: "10px" }}>
+                                                    <span style={{ width: "18px", height: "18px", borderRadius: "50%", background: "rgba(176,122,74,0.14)", color: "var(--accent-primary)", display: "grid", placeItems: "center", fontSize: "9px", fontWeight: 600 }}>
+                                                        {getInitials(member.name)}
+                                                    </span>
+                                                    {member.name}
+                                                </span>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: "16px" }}>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.2fr 0.9fr auto", gap: "10px", alignItems: "end" }}>
+                                        <div>
+                                            <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Milestone</label>
+                                            <input
+                                                type="text"
+                                                value={milestoneDrafts[phase.id]?.name || ""}
+                                                onChange={(e) => updateMilestoneDraft(phase.id, "name", e.target.value)}
+                                                placeholder="Concept sign-off"
+                                                style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none" }}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Description</label>
+                                            <input
+                                                type="text"
+                                                value={milestoneDrafts[phase.id]?.description || ""}
+                                                onChange={(e) => updateMilestoneDraft(phase.id, "description", e.target.value)}
+                                                placeholder="Optional note for what this milestone means"
+                                                style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none" }}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Target Date</label>
+                                            <input
+                                                type="date"
+                                                value={milestoneDrafts[phase.id]?.date || ""}
+                                                onChange={(e) => updateMilestoneDraft(phase.id, "date", e.target.value)}
+                                                min={asInputDate(phase.startDate)}
+                                                max={asInputDate(phase.endDate)}
+                                                style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }}
+                                            />
+                                        </div>
+                                        <button
+                                            onClick={() => addPhaseMilestone(phase.id)}
+                                            disabled={!milestoneDrafts[phase.id]?.name || !milestoneDrafts[phase.id]?.date || addMilestoneMut.isPending}
+                                            style={{ padding: "9px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !milestoneDrafts[phase.id]?.name || !milestoneDrafts[phase.id]?.date ? 0.5 : 1 }}
+                                        >
+                                            Add Milestone
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {phase.milestoneBoards.length === 0 ? (
+                                    <div style={{ padding: "26px", textAlign: "center", borderRadius: "8px", border: "1px dashed var(--border-secondary)", background: "var(--bg-secondary)" }}>
+                                        <Package size={22} style={{ color: "var(--text-muted)", marginBottom: "8px" }} />
+                                        <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No milestones for this phase yet. Add one above to start structuring deliverables.</p>
+                                    </div>
+                                ) : (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                                        {phase.milestoneBoards.map((milestone) => {
+                                            const statusCycle = ["pending", "in-progress", "completed", "approved"] as const;
+                                            return (
+                                                <div key={milestone.id} style={{ padding: "16px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)" }}>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", marginBottom: "14px", flexWrap: "wrap" }}>
+                                                        <div>
+                                                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                                                {milestone.done ? <CheckCircle2 size={15} style={{ color: "var(--success)" }} /> : <div style={{ width: "15px", height: "15px", borderRadius: "50%", border: "1.5px solid var(--border-secondary)" }} />}
+                                                                <h4 style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{milestone.name}</h4>
+                                                                <span style={{ fontSize: "10px", fontWeight: 600, color: milestone.done ? "var(--success)" : "var(--text-muted)", background: milestone.done ? "rgba(90,122,70,0.08)" : "var(--bg-card)", borderRadius: "999px", padding: "4px 8px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                                                    {milestone.done ? "Complete" : "In Progress"}
+                                                                </span>
+                                                            </div>
+                                                            {milestone.description && (
+                                                                <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "6px", lineHeight: 1.5 }}>{milestone.description}</p>
+                                                            )}
+                                                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                                                                Target date: {milestone.date || "No date"} | {milestone.deliverables.length} deliverable{milestone.deliverables.length !== 1 ? "s" : ""}
+                                                            </p>
+                                                        </div>
+                                                        {milestone.deliverables.length === 0 && (
+                                                            <button
+                                                                onClick={() => deleteMilestoneMut.mutate({ id: milestone.id })}
+                                                                style={{ border: "none", background: "none", color: "var(--text-muted)", cursor: "pointer", padding: "4px" }}
+                                                            >
+                                                                <Trash2 size={13} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    {milestone.deliverables.length === 0 ? (
+                                                        <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px" }}>No deliverables under this milestone yet.</p>
+                                                    ) : (
+                                                        <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
+                                                            {milestone.deliverables.map((deliverable) => {
+                                                                const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
+                                                                    pending: { label: "Pending", color: "var(--text-muted)", bg: "var(--bg-card)" },
+                                                                    "in-progress": { label: "In Progress", color: "var(--info)", bg: "rgba(90,122,144,0.08)" },
+                                                                    completed: { label: "Completed", color: "var(--success)", bg: "rgba(90,122,70,0.08)" },
+                                                                    approved: { label: "Approved", color: "var(--accent-primary)", bg: "rgba(176,122,74,0.08)" },
+                                                                };
+                                                                const ds = statusConfig[deliverable.status] || statusConfig.pending;
+                                                                return (
+                                                                    <div key={deliverable.id} style={{ display: "grid", gridTemplateColumns: "auto 1.4fr 1fr auto auto", gap: "10px", alignItems: "center", padding: "10px 12px", borderRadius: "6px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                const idx = statusCycle.indexOf(deliverable.status);
+                                                                                const next = statusCycle[(idx + 1) % statusCycle.length];
+                                                                                updateDeliverableMut.mutate({
+                                                                                    id: deliverable.id,
+                                                                                    status: next,
+                                                                                    completedDate: next === "completed" || next === "approved" ? new Date().toISOString().slice(0, 10) : "",
+                                                                                });
+                                                                            }}
+                                                                            style={{ border: "none", cursor: "pointer", color: ds.color, display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", fontWeight: 600, padding: "4px 8px", borderRadius: "999px", background: ds.bg, whiteSpace: "nowrap" }}
+                                                                        >
+                                                                            {ds.label}
+                                                                        </button>
+                                                                        <div>
+                                                                            <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{deliverable.title}</p>
+                                                                            {deliverable.description && <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "3px" }}>{deliverable.description}</p>}
+                                                                        </div>
+                                                                        <div>
+                                                                            <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Owner</p>
+                                                                            <p style={{ fontSize: "11px", color: "var(--text-primary)", marginTop: "3px" }}>{deliverable.assignee?.name || "Unassigned"}</p>
+                                                                        </div>
+                                                                        <div>
+                                                                            <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Due</p>
+                                                                            <p style={{ fontSize: "11px", color: "var(--text-primary)", marginTop: "3px" }}>{deliverable.dueDate || "No date"}</p>
+                                                                        </div>
+                                                                        <button
+                                                                            onClick={() => deleteDeliverableMut.mutate({ id: deliverable.id })}
+                                                                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}
+                                                                        >
+                                                                            <Trash2 size={13} />
+                                                                        </button>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+
+                                                    <div style={{ display: "grid", gridTemplateColumns: "1.05fr 1.15fr 1.05fr 0.9fr auto", gap: "10px", alignItems: "end" }}>
+                                                        <div>
+                                                            <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Deliverable</label>
+                                                            <input
+                                                                type="text"
+                                                                value={deliverableDrafts[milestone.id]?.title || ""}
+                                                                onChange={(e) => updateDeliverableDraft(milestone.id, "title", e.target.value)}
+                                                                placeholder="Issue structural drawings"
+                                                                style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none" }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Description</label>
+                                                            <input
+                                                                type="text"
+                                                                value={deliverableDrafts[milestone.id]?.description || ""}
+                                                                onChange={(e) => updateDeliverableDraft(milestone.id, "description", e.target.value)}
+                                                                placeholder="Optional note for this deliverable"
+                                                                style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none" }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Phase Team Member</label>
+                                                            <select
+                                                                value={deliverableDrafts[milestone.id]?.assigneeId || ""}
+                                                                onChange={(e) => updateDeliverableDraft(milestone.id, "assigneeId", e.target.value)}
+                                                                disabled={availableMembers.length === 0}
+                                                                style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: availableMembers.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: availableMembers.length === 0 ? 0.7 : 1 }}
+                                                            >
+                                                                <option value="">{availableMembers.length === 0 ? "Assign phase team first" : "Select assignee..."}</option>
+                                                                {availableMembers.map((member) => (
+                                                                    <option key={member.id} value={member.id}>{member.name}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Due Date</label>
+                                                            <input
+                                                                type="date"
+                                                                value={deliverableDrafts[milestone.id]?.dueDate || ""}
+                                                                onChange={(e) => updateDeliverableDraft(milestone.id, "dueDate", e.target.value)}
+                                                                min={asInputDate(phase.startDate)}
+                                                                max={asInputDate(phase.endDate)}
+                                                                style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }}
+                                                            />
+                                                        </div>
+                                                        <button
+                                                            onClick={() => addMilestoneDeliverable(phase.id, milestone.id)}
+                                                            disabled={!deliverableDrafts[milestone.id]?.title || createDeliverableMut.isPending}
+                                                            style={{ padding: "9px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !deliverableDrafts[milestone.id]?.title ? 0.5 : 1 }}
+                                                        >
+                                                            Add Deliverable
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {phase.unlinkedDeliverables.length > 0 && (
+                                    <div style={{ marginTop: "16px", padding: "14px 16px", borderRadius: "8px", border: "1px dashed var(--border-secondary)", background: "var(--bg-secondary)" }}>
+                                        <p style={{ fontSize: "11px", color: "var(--text-primary)", fontWeight: 500, marginBottom: "8px" }}>Ungrouped deliverables</p>
+                                        <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "10px" }}>
+                                            These older deliverables are not connected to a milestone yet. They stay visible here so nothing gets lost.
+                                        </p>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                            {phase.unlinkedDeliverables.map((deliverable) => (
+                                                <div key={deliverable.id} style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", padding: "8px 10px", borderRadius: "6px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
+                                                    <div>
+                                                        <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{deliverable.title}</p>
+                                                        <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "3px" }}>{deliverable.assignee?.name || "Unassigned"} | {deliverable.dueDate || "No date"}</p>
+                                                    </div>
+                                                    <button onClick={() => deleteDeliverableMut.mutate({ id: deliverable.id })} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}>
+                                                        <Trash2 size={13} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
             )}
 
@@ -1340,8 +1660,8 @@ export default function ProjectDetailPage() {
                                     <tr key={f.id} style={{ borderBottom: "1px solid var(--border-primary)" }} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
                                         <td style={{ padding: "10px 14px" }}>{f.url ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: "12px", fontWeight: 500, color: "var(--accent-primary)", textDecoration: "none" }}>{f.name}</a> : <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{f.name}</span>}</td>
                                         <td style={{ padding: "10px 14px" }}><span style={{ fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", textTransform: "uppercase", color: "var(--text-muted)", background: "var(--bg-secondary)" }}>{f.fileType}</span></td>
-                                        <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{f.phase?.name || "—"}</td>
-                                        <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{f.uploadedBy?.name || "—"}</td>
+                                        <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{f.phase?.name || "-"}</td>
+                                        <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{f.uploadedBy?.name || "-"}</td>
                                         <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{new Date(f.createdAt).toLocaleDateString()}</td>
                                         <td style={{ padding: "10px 14px" }}><button onClick={() => deleteFileMut.mutate({ id: f.id })} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }} onMouseEnter={(e) => { e.currentTarget.style.color = "var(--danger)"; }} onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}><Trash2 size={13} /></button></td>
                                     </tr>
@@ -1414,3 +1734,5 @@ export default function ProjectDetailPage() {
         </div>
     );
 }
+
+

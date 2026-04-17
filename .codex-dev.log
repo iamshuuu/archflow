@@ -1,0 +1,31 @@
+
+> archflow@0.1.0 dev
+> next dev
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.51.39:3000
+- Environments: .env
+
+✓ Starting...
+⚠ The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+✓ Ready in 2.4s
+ GET /dashboard 200 in 467ms (compile: 287ms, proxy.ts: 8ms, render: 172ms)
+ GET /api/auth/session 200 in 883ms (compile: 848ms, render: 35ms)
+ GET /api/auth/session 200 in 22ms (compile: 10ms, render: 12ms)
+ POST /api/trpc/notification.checkBudgets?batch=1 200 in 998ms (compile: 893ms, render: 105ms)
+ GET /api/trpc/analytics.firmKPIs,project.list,invoice.list,time.list,clients.list,settings.get,notification.list,notification.unreadCount?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%221%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%222%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%223%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%224%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%225%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%226%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%227%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%7D 200 in 1240ms (compile: 910ms, render: 330ms)
+ GET /dashboard/projects 200 in 102ms (compile: 47ms, proxy.ts: 16ms, render: 40ms)
+ GET /api/trpc/project.list,settings.get?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%221%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%7D 200 in 54ms (compile: 16ms, render: 38ms)
+ GET /dashboard/projects/cmnoljkyn00015ovm3kv8ntpz 200 in 631ms (compile: 587ms, proxy.ts: 13ms, render: 31ms)
+ GET /api/trpc/project.getById,expense.list,project.listTasks,team.list,project.budgetControl,project.listFiles,project.listDeliverables?batch=1&input=%7B%220%22%3A%7B%22json%22%3A%7B%22id%22%3A%22cmnoljkyn00015ovm3kv8ntpz%22%7D%7D%2C%221%22%3A%7B%22json%22%3A%7B%22projectId%22%3A%22cmnoljkyn00015ovm3kv8ntpz%22%7D%7D%2C%222%22%3A%7B%22json%22%3A%7B%22projectId%22%3A%22cmnoljkyn00015ovm3kv8ntpz%22%7D%7D%2C%223%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%224%22%3A%7B%22json%22%3A%7B%22projectId%22%3A%22cmnoljkyn00015ovm3kv8ntpz%22%7D%7D%2C%225%22%3A%7B%22json%22%3A%7B%22projectId%22%3A%22cmnoljkyn00015ovm3kv8ntpz%22%7D%7D%2C%226%22%3A%7B%22json%22%3A%7B%22projectId%22%3A%22cmnoljkyn00015ovm3kv8ntpz%22%7D%7D%7D 200 in 58ms (compile: 11ms, render: 46ms)
+ GET /api/auth/session 200 in 24ms (compile: 11ms, render: 13ms)
+ GET /api/auth/session 200 in 11ms (compile: 2ms, render: 9ms)
+ POST /api/trpc/project.updatePhaseAssignment?batch=1 200 in 37ms (compile: 7ms, render: 29ms)
+ GET /api/trpc/project.getById?batch=1&input=%7B%220%22%3A%7B%22json%22%3A%7B%22id%22%3A%22cmnoljkyn00015ovm3kv8ntpz%22%7D%7D%7D 200 in 21ms (compile: 1966µs, render: 19ms)
+ GET /dashboard/time 200 in 61ms (compile: 32ms, proxy.ts: 10ms, render: 19ms)
+ GET /api/trpc/project.list,time.getMyTimeOffRequests,time.getTeamTimeOffRequests,time.getMySubmissions,time.getTeamSubmissions?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%221%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%222%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%223%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%224%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%7D 200 in 44ms (compile: 17ms, render: 27ms)
+ GET /dashboard/budgets 200 in 81ms (compile: 55ms, proxy.ts: 8ms, render: 18ms)
+ GET /api/trpc/project.budgets,settings.get?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%2C%221%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%7D 200 in 52ms (compile: 12ms, render: 40ms)
+ GET /dashboard/time 200 in 31ms (compile: 3ms, proxy.ts: 9ms, render: 19ms)
+ GET /dashboard/projects 200 in 25ms (compile: 3ms, proxy.ts: 8ms, render: 14ms)

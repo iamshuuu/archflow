@@ -221,6 +221,7 @@ model PhaseAssignment {
   id           String   @id @default(cuid())
   roleLabel    String   @default("")
   plannedHours Float    @default(0)
+  billRate     Float    @default(0)
   createdAt    DateTime @default(now())
 
   phaseId String
@@ -237,6 +238,7 @@ model PhaseAssignment {
 model Milestone {
   id   String  @id @default(cuid())
   name String
+  description String @default("")
   date String  // YYYY-MM-DD
   done Boolean @default(false)
 
@@ -245,6 +247,8 @@ model Milestone {
 
   projectId String
   project   Project @relation(fields: [projectId], references: [id])
+
+  deliverables Deliverable[]
 }
 
 // ─── Time Entry ───
@@ -549,6 +553,9 @@ model Deliverable {
 
   phaseId String
   phase   Phase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+
+  milestoneId String?
+  milestone   Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
 
   projectId String
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
