@@ -1,12 +1,25 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../trpc";
 
+function canApproveExpenses(role: string) {
+    return role === "owner" || role === "admin";
+}
+
 export const expenseRouter = router({
+    approvalContext: protectedProcedure.query(async ({ ctx }) => {
+        const user = await ctx.db.user.findUnique({
+            where: { email: ctx.session!.user!.email! },
+            select: { id: true, role: true },
+        });
+        return { canApprove: !!user && canApproveExpenses(user.role), userId: user?.id || "" };
+    }),
+
     list: protectedProcedure
         .input(z.object({
             projectId: z.string().optional(),
             category: z.string().optional(),
-            status: z.string().optional(),
+            status: z.enum(["pending", "approved", "rejected", "reimbursed"]).optional(),
             dateFrom: z.string().optional(),
             dateTo: z.string().optional(),
         }).optional())
@@ -14,14 +27,17 @@ export const expenseRouter = router({
             const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
             if (!user) return [];
 
-            const where: any = { userId: user.id };
+            const where: any = canApproveExpenses(user.role) ? { user: { orgId: user.orgId } } : { userId: user.id };
             if (input?.projectId) where.projectId = input.projectId;
             if (input?.category) where.category = input.category;
             if (input?.status) where.status = input.status;
 
             const expenses = await ctx.db.expense.findMany({
                 where,
-                include: { project: { select: { id: true, name: true } } },
+                include: {
+                    project: { select: { id: true, name: true } },
+                    user: { select: { id: true, name: true, role: true } },
+                },
                 orderBy: { date: "desc" },
             });
 
@@ -42,7 +58,9 @@ export const expenseRouter = router({
             const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
             if (!user) return { total: 0, pending: 0, approved: 0, mileage: 0, byCategory: {} as Record<string, number> };
 
-            const expenses = await ctx.db.expense.findMany({ where: { userId: user.id } });
+            const expenses = await ctx.db.expense.findMany({
+                where: canApproveExpenses(user.role) ? { user: { orgId: user.orgId } } : { userId: user.id },
+            });
 
             const total = expenses.reduce((s: number, e: any) => s + e.amount, 0);
             const pending = expenses.filter((e: any) => e.status === "pending").reduce((s: number, e: any) => s + e.amount, 0);
@@ -98,12 +116,35 @@ export const expenseRouter = router({
         }))
         .mutation(async ({ ctx, input }) => {
             const { id, ...data } = input;
+            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+            if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "User not found" });
+            const expense = await ctx.db.expense.findFirst({
+                where: { id, user: { orgId: user.orgId } },
+                select: { id: true, userId: true },
+            });
+            if (!expense) throw new TRPCError({ code: "FORBIDDEN", message: "Expense not found or inaccessible" });
+            if (data.status && !canApproveExpenses(user.role)) {
+                throw new TRPCError({ code: "FORBIDDEN", message: "Only owners and admins can approve or reject expenses" });
+            }
+            if (expense.userId !== user.id && !canApproveExpenses(user.role)) {
+                throw new TRPCError({ code: "FORBIDDEN", message: "You can only edit your own expenses" });
+            }
             return ctx.db.expense.update({ where: { id }, data });
         }),
 
     delete: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
+            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+            if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "User not found" });
+            const expense = await ctx.db.expense.findFirst({
+                where: { id: input.id, user: { orgId: user.orgId } },
+                select: { id: true, userId: true },
+            });
+            if (!expense) throw new TRPCError({ code: "FORBIDDEN", message: "Expense not found or inaccessible" });
+            if (expense.userId !== user.id && !canApproveExpenses(user.role)) {
+                throw new TRPCError({ code: "FORBIDDEN", message: "You can only delete your own expenses" });
+            }
             return ctx.db.expense.delete({ where: { id: input.id } });
         }),
 });

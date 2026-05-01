@@ -38,6 +38,21 @@ async function ensureMilestoneAccess(ctx: TRPCContext, orgId: string, milestoneI
     return milestone;
 }
 
+async function ensureDeliverableAccess(ctx: TRPCContext, orgId: string, deliverableId: string) {
+    const deliverable = await ctx.db.deliverable.findFirst({
+        where: { id: deliverableId, project: { orgId } },
+        select: {
+            id: true,
+            phaseId: true,
+            projectId: true,
+            milestoneId: true,
+            phase: { select: { startDate: true, endDate: true } },
+        },
+    });
+    if (!deliverable) throw new TRPCError({ code: "FORBIDDEN", message: "Deliverable not found or inaccessible" });
+    return deliverable;
+}
+
 async function ensureTemplateAccess(ctx: TRPCContext, orgId: string, templateId: string) {
     const template = await ctx.db.projectTemplate.findFirst({ where: { id: templateId, orgId } });
     if (!template) throw new TRPCError({ code: "FORBIDDEN", message: "Template not found or inaccessible" });
@@ -87,6 +102,100 @@ function assertDateWithinPhaseRange(
     if (phaseEnd && targetDate > phaseEnd) {
         throw new TRPCError({ code: "BAD_REQUEST", message: `${label} must be on or before the phase end date` });
     }
+}
+
+function taskStatusProgress(status: string) {
+    if (status === "done") return 100;
+    if (status === "review") return 75;
+    if (status === "in-progress") return 50;
+    return 0;
+}
+
+function deliverableStatusProgress(status: string) {
+    if (status === "completed" || status === "approved") return 100;
+    if (status === "in-progress") return 50;
+    return 0;
+}
+
+async function syncProjectExecutionProgress(ctx: TRPCContext, projectId: string) {
+    const project = await ctx.db.project.findUnique({
+        where: { id: projectId },
+        include: {
+            phases: {
+                include: {
+                    milestones: true,
+                    deliverables: {
+                        include: {
+                            tasks: { select: { status: true } },
+                        },
+                    },
+                },
+            },
+        },
+    });
+    if (!project) return;
+
+    const deliverableProgress = new Map<string, number>();
+    const deliverableStatus = new Map<string, string>();
+
+    for (const phase of project.phases) {
+        for (const deliverable of phase.deliverables) {
+            const taskCount = deliverable.tasks.length;
+            const progress = taskCount > 0
+                ? Math.round(deliverable.tasks.reduce((sum, task) => sum + taskStatusProgress(task.status), 0) / taskCount)
+                : deliverableStatusProgress(deliverable.status);
+            const nextStatus = taskCount === 0
+                ? deliverable.status
+                : progress >= 100
+                    ? "completed"
+                    : progress > 0
+                        ? "in-progress"
+                        : "pending";
+
+            deliverableProgress.set(deliverable.id, progress);
+            deliverableStatus.set(deliverable.id, nextStatus);
+
+            if (deliverable.status !== nextStatus) {
+                await ctx.db.deliverable.update({
+                    where: { id: deliverable.id },
+                    data: {
+                        status: nextStatus,
+                        completedDate: nextStatus === "completed" ? new Date().toISOString().slice(0, 10) : "",
+                    },
+                });
+            }
+        }
+
+        for (const milestone of phase.milestones) {
+            const milestoneDeliverables = phase.deliverables.filter((deliverable) => deliverable.milestoneId === milestone.id);
+            if (milestoneDeliverables.length === 0) continue;
+            const isDone = milestoneDeliverables.every((deliverable) => {
+                const status = deliverableStatus.get(deliverable.id) || deliverable.status;
+                return status === "completed" || status === "approved";
+            });
+            if (milestone.done !== isDone) {
+                await ctx.db.milestone.update({ where: { id: milestone.id }, data: { done: isDone } });
+            }
+        }
+    }
+
+    const phaseProgress = project.phases.map((phase) => {
+        if (phase.deliverables.length > 0) {
+            return Math.round(
+                phase.deliverables.reduce((sum, deliverable) => sum + (deliverableProgress.get(deliverable.id) ?? deliverableStatusProgress(deliverable.status)), 0) /
+                phase.deliverables.length,
+            );
+        }
+        if (phase.milestones.length > 0) {
+            return Math.round((phase.milestones.filter((milestone) => milestone.done).length / phase.milestones.length) * 100);
+        }
+        return 0;
+    });
+    const projectProgress = phaseProgress.length > 0
+        ? Math.round(phaseProgress.reduce((sum, progress) => sum + progress, 0) / phaseProgress.length)
+        : 0;
+
+    await ctx.db.project.update({ where: { id: projectId }, data: { progress: projectProgress } });
 }
 
 export const projectRouter = router({
@@ -153,6 +262,11 @@ export const projectRouter = router({
                         include: {
                             timeEntries: true,
                             milestones: true,
+                            deliverables: {
+                                include: {
+                                    tasks: { select: { id: true, status: true } },
+                                },
+                            },
                             assignments: {
                                 include: {
                                     user: { select: { id: true, name: true, title: true, billRate: true, costRate: true } },
@@ -368,7 +482,10 @@ export const projectRouter = router({
             await ensureProjectAccess(ctx, user.orgId, input.id);
             return ctx.db.project.update({
                 where: { id: input.id },
-                data: { pipelineStage: input.pipelineStage },
+                data: {
+                    pipelineStage: input.pipelineStage,
+                    status: input.pipelineStage === "won" ? "active" : "pipeline",
+                },
             });
         }),
 
@@ -447,7 +564,11 @@ export const projectRouter = router({
             const user = await requireCurrentUser(ctx);
             return ctx.db.task.findMany({
                 where: { projectId: input.projectId, project: { orgId: user.orgId } },
-                include: { assignee: { select: { id: true, name: true } }, phase: { select: { id: true, name: true } } },
+                include: {
+                    assignee: { select: { id: true, name: true, title: true } },
+                    phase: { select: { id: true, name: true, startDate: true, endDate: true } },
+                    deliverable: { select: { id: true, title: true, milestoneId: true } },
+                },
                 orderBy: { sortOrder: "asc" },
             });
         }),
@@ -456,9 +577,15 @@ export const projectRouter = router({
         .input(z.object({
             projectId: z.string(),
             phaseId: z.string(),
+            deliverableId: z.string().min(1),
             title: z.string().min(1),
+            description: z.string().default(""),
+            priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
             assigneeId: z.string().optional(),
             dueDate: z.string().default(""),
+            estimatedHours: z.number().default(0),
+            actualHours: z.number().default(0),
+            billable: z.boolean().default(true),
         }))
         .mutation(async ({ ctx, input }) => {
             const user = await requireCurrentUser(ctx);
@@ -467,41 +594,94 @@ export const projectRouter = router({
             if (phase.projectId !== input.projectId) {
                 throw new TRPCError({ code: "BAD_REQUEST", message: "Phase does not belong to project" });
             }
+            const deliverable = await ensureDeliverableAccess(ctx, user.orgId, input.deliverableId);
+            if (deliverable.projectId !== input.projectId || deliverable.phaseId !== input.phaseId) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: "Task deliverable must belong to the selected phase" });
+            }
+            assertDateWithinPhaseRange(input.dueDate, phase, "Task");
+            if (input.assigneeId) {
+                const assignment = await ctx.db.phaseAssignment.findFirst({
+                    where: { phaseId: input.phaseId, userId: input.assigneeId, phase: { project: { orgId: user.orgId } } },
+                    select: { id: true },
+                });
+                if (!assignment) {
+                    throw new TRPCError({ code: "BAD_REQUEST", message: "Assignee must be part of the phase team" });
+                }
+            }
             const count = await ctx.db.task.count({ where: { projectId: input.projectId } });
-            return ctx.db.task.create({
+            const created = await ctx.db.task.create({
                 data: { ...input, sortOrder: count },
-                include: { assignee: { select: { id: true, name: true } }, phase: { select: { id: true, name: true } } },
+                include: {
+                    assignee: { select: { id: true, name: true, title: true } },
+                    phase: { select: { id: true, name: true, startDate: true, endDate: true } },
+                    deliverable: { select: { id: true, title: true, milestoneId: true } },
+                },
             });
+            await syncProjectExecutionProgress(ctx, input.projectId);
+            return created;
         }),
 
     updateTask: protectedProcedure
         .input(z.object({
             id: z.string(),
             title: z.string().optional(),
+            description: z.string().optional(),
             status: z.enum(["todo", "in-progress", "review", "done"]).optional(),
+            priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
             assigneeId: z.string().nullable().optional(),
             dueDate: z.string().optional(),
+            estimatedHours: z.number().optional(),
+            actualHours: z.number().optional(),
+            billable: z.boolean().optional(),
             sortOrder: z.number().optional(),
         }))
         .mutation(async ({ ctx, input }) => {
             const user = await requireCurrentUser(ctx);
-            const task = await ctx.db.task.findFirst({ where: { id: input.id, project: { orgId: user.orgId } }, select: { id: true } });
+            const task = await ctx.db.task.findFirst({
+                where: { id: input.id, project: { orgId: user.orgId } },
+                select: {
+                    id: true,
+                    phaseId: true,
+                    projectId: true,
+                    phase: { select: { startDate: true, endDate: true } },
+                },
+            });
             if (!task) throw new TRPCError({ code: "FORBIDDEN", message: "Task not found or inaccessible" });
+            if (typeof input.dueDate === "string") {
+                assertDateWithinPhaseRange(input.dueDate, task.phase, "Task");
+            }
+            if (typeof input.assigneeId === "string" && input.assigneeId) {
+                const assignment = await ctx.db.phaseAssignment.findFirst({
+                    where: { phaseId: task.phaseId, userId: input.assigneeId, phase: { project: { orgId: user.orgId } } },
+                    select: { id: true },
+                });
+                if (!assignment) {
+                    throw new TRPCError({ code: "BAD_REQUEST", message: "Assignee must be part of the phase team" });
+                }
+            }
             const { id, ...data } = input;
-            return ctx.db.task.update({
+            const updated = await ctx.db.task.update({
                 where: { id },
                 data,
-                include: { assignee: { select: { id: true, name: true } }, phase: { select: { id: true, name: true } } },
+                include: {
+                    assignee: { select: { id: true, name: true, title: true } },
+                    phase: { select: { id: true, name: true, startDate: true, endDate: true } },
+                    deliverable: { select: { id: true, title: true, milestoneId: true } },
+                },
             });
+            await syncProjectExecutionProgress(ctx, task.projectId);
+            return updated;
         }),
 
     deleteTask: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
             const user = await requireCurrentUser(ctx);
-            const task = await ctx.db.task.findFirst({ where: { id: input.id, project: { orgId: user.orgId } }, select: { id: true } });
+            const task = await ctx.db.task.findFirst({ where: { id: input.id, project: { orgId: user.orgId } }, select: { id: true, projectId: true } });
             if (!task) throw new TRPCError({ code: "FORBIDDEN", message: "Task not found or inaccessible" });
-            return ctx.db.task.delete({ where: { id: input.id } });
+            const deleted = await ctx.db.task.delete({ where: { id: input.id } });
+            await syncProjectExecutionProgress(ctx, task.projectId);
+            return deleted;
         }),
 
     // ─── Phase CRUD ───
@@ -899,6 +1079,10 @@ export const projectRouter = router({
                     assignee: { select: { id: true, name: true } },
                     phase: { select: { id: true, name: true } },
                     milestone: { select: { id: true, name: true, date: true, done: true } },
+                    tasks: {
+                        include: { assignee: { select: { id: true, name: true, title: true } } },
+                        orderBy: { sortOrder: "asc" },
+                    },
                 },
                 orderBy: [{ phaseId: "asc" }, { sortOrder: "asc" }],
             });
@@ -944,11 +1128,16 @@ export const projectRouter = router({
                     assignee: { select: { id: true, name: true } },
                     phase: { select: { id: true, name: true } },
                     milestone: { select: { id: true, name: true, date: true, done: true } },
+                    tasks: {
+                        include: { assignee: { select: { id: true, name: true, title: true } } },
+                        orderBy: { sortOrder: "asc" },
+                    },
                 },
             });
             if (created.milestone?.id) {
                 await ctx.db.milestone.update({ where: { id: created.milestone.id }, data: { done: false } });
             }
+            await syncProjectExecutionProgress(ctx, input.projectId);
             return created;
         }),
 
@@ -993,6 +1182,10 @@ export const projectRouter = router({
                     assignee: { select: { id: true, name: true } },
                     phase: { select: { id: true, name: true } },
                     milestone: { select: { id: true, name: true, date: true, done: true } },
+                    tasks: {
+                        include: { assignee: { select: { id: true, name: true, title: true } } },
+                        orderBy: { sortOrder: "asc" },
+                    },
                 },
             });
             if (updated.milestone?.id) {
@@ -1003,6 +1196,7 @@ export const projectRouter = router({
                 const milestoneDone = milestoneDeliverables.length > 0 && milestoneDeliverables.every((item) => item.status === "completed" || item.status === "approved");
                 await ctx.db.milestone.update({ where: { id: updated.milestone.id }, data: { done: milestoneDone } });
             }
+            await syncProjectExecutionProgress(ctx, updated.projectId);
             return updated;
         }),
 
@@ -1024,6 +1218,7 @@ export const projectRouter = router({
                 const milestoneDone = milestoneDeliverables.length > 0 && milestoneDeliverables.every((item) => item.status === "completed" || item.status === "approved");
                 await ctx.db.milestone.update({ where: { id: deliverable.milestoneId }, data: { done: milestoneDone } });
             }
+            await syncProjectExecutionProgress(ctx, deleted.projectId);
             return deleted;
         }),
 });

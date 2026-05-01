@@ -1,5 +1,24 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../trpc";
+
+const projectInvoiceLineItemSchema = z.object({
+    description: z.string().min(1),
+    qty: z.number().min(0),
+    rate: z.number().min(0),
+    sourceType: z.enum(["time_entry", "expense"]).optional(),
+    sourceIds: z.array(z.string()).default([]),
+});
+
+function toIsoDate(date: Date) {
+    return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number) {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
+}
 
 export const invoiceRouter = router({
     list: protectedProcedure.query(async ({ ctx }) => {
@@ -7,7 +26,7 @@ export const invoiceRouter = router({
         if (!user) return [];
         return ctx.db.invoice.findMany({
             where: { orgId: user.orgId },
-            include: { client: true, project: true, lineItems: true },
+            include: { client: true, project: true, lineItems: true, sources: true },
             orderBy: { date: "desc" },
         });
     }),
@@ -40,6 +59,177 @@ export const invoiceRouter = router({
             });
         }),
 
+    projectInvoicePreview: protectedProcedure
+        .input(z.object({ projectId: z.string() }))
+        .query(async ({ ctx, input }) => {
+            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+            if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "User not found" });
+
+            const project = await ctx.db.project.findFirst({
+                where: { id: input.projectId, orgId: user.orgId },
+                include: { client: true },
+            });
+            if (!project) throw new TRPCError({ code: "FORBIDDEN", message: "Project not found or inaccessible" });
+
+            const billedSources = await ctx.db.invoiceSource.findMany({
+                where: {
+                    invoice: { orgId: user.orgId },
+                    sourceType: { in: ["time_entry", "expense"] },
+                },
+                select: { sourceType: true, sourceId: true },
+            });
+            const billed = new Set(billedSources.map((source) => `${source.sourceType}:${source.sourceId}`));
+
+            const timeEntries = await ctx.db.timeEntry.findMany({
+                where: {
+                    projectId: input.projectId,
+                    project: { orgId: user.orgId },
+                    billable: true,
+                    status: "approved",
+                },
+                include: {
+                    user: { select: { id: true, name: true, billRate: true } },
+                    phase: {
+                        select: {
+                            id: true,
+                            name: true,
+                            assignments: { select: { userId: true, billRate: true } },
+                        },
+                    },
+                },
+                orderBy: { date: "asc" },
+            });
+
+            const groupedTime = new Map<string, { description: string; qty: number; rate: number; sourceType: "time_entry"; sourceIds: string[]; meta: string }>();
+            for (const entry of timeEntries) {
+                if (billed.has(`time_entry:${entry.id}`)) continue;
+                const phaseAssignment = entry.phase?.assignments.find((assignment) => assignment.userId === entry.userId);
+                const rate = phaseAssignment?.billRate || entry.user?.billRate || 0;
+                const phaseName = entry.phase?.name || "Unassigned phase";
+                const userName = entry.user?.name || "Unknown";
+                const key = `${entry.userId}:${entry.phaseId}:${rate}`;
+                const existing = groupedTime.get(key);
+                if (existing) {
+                    existing.qty += entry.hours;
+                    existing.sourceIds.push(entry.id);
+                    continue;
+                }
+                groupedTime.set(key, {
+                    description: `${userName} - ${phaseName} work`,
+                    qty: entry.hours,
+                    rate,
+                    sourceType: "time_entry",
+                    sourceIds: [entry.id],
+                    meta: `${entry.status} time`,
+                });
+            }
+
+            const expenses = await ctx.db.expense.findMany({
+                where: {
+                    projectId: input.projectId,
+                    project: { orgId: user.orgId },
+                    billable: true,
+                    status: { not: "rejected" },
+                },
+                include: { user: { select: { name: true } } },
+                orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+            });
+
+            const expenseLines = expenses
+                .filter((expense) => !billed.has(`expense:${expense.id}`))
+                .map((expense) => ({
+                    description: `Expense - ${expense.description}`,
+                    qty: 1,
+                    rate: expense.amount,
+                    sourceType: "expense" as const,
+                    sourceIds: [expense.id],
+                    meta: `${expense.category} | ${expense.status}`,
+                }));
+
+            const lineItems = [...groupedTime.values(), ...expenseLines].map((line, index) => ({
+                id: `${line.sourceType}-${index}`,
+                ...line,
+                amount: line.qty * line.rate,
+            }));
+
+            const today = new Date();
+            const total = lineItems.reduce((sum, line) => sum + line.amount, 0);
+
+            return {
+                project: { id: project.id, name: project.name, clientId: project.clientId, clientName: project.client.name },
+                lineItems,
+                total,
+                issueDate: toIsoDate(today),
+                dueDate: toIsoDate(addDays(today, 30)),
+            };
+        }),
+
+    createProjectDraft: protectedProcedure
+        .input(z.object({
+            projectId: z.string(),
+            date: z.string(),
+            dueDate: z.string(),
+            notes: z.string().default(""),
+            paymentTerms: z.string().default("net30"),
+            lineItems: z.array(projectInvoiceLineItemSchema).min(1),
+        }))
+        .mutation(async ({ ctx, input }) => {
+            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
+            if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "User not found" });
+
+            const project = await ctx.db.project.findFirst({
+                where: { id: input.projectId, orgId: user.orgId },
+                select: { id: true, clientId: true },
+            });
+            if (!project) throw new TRPCError({ code: "FORBIDDEN", message: "Project not found or inaccessible" });
+
+            const sourceRefs = input.lineItems.flatMap((item) =>
+                item.sourceType ? item.sourceIds.map((sourceId) => ({ sourceType: item.sourceType!, sourceId })) : [],
+            );
+            if (sourceRefs.length > 0) {
+                const alreadyBilled = await ctx.db.invoiceSource.findMany({
+                    where: {
+                        OR: sourceRefs.map((source) => ({ sourceType: source.sourceType, sourceId: source.sourceId })),
+                        invoice: { orgId: user.orgId },
+                    },
+                    select: { sourceType: true, sourceId: true },
+                });
+                if (alreadyBilled.length > 0) {
+                    throw new TRPCError({ code: "CONFLICT", message: "Some selected work or expenses have already been attached to an invoice." });
+                }
+            }
+
+            const count = await ctx.db.invoice.count({ where: { orgId: user.orgId } });
+            const number = `INV-${new Date().getFullYear()}-${String(count + 1).padStart(3, "0")}`;
+            const amount = input.lineItems.reduce((sum, item) => sum + item.qty * item.rate, 0);
+
+            return ctx.db.invoice.create({
+                data: {
+                    number,
+                    amount,
+                    date: input.date,
+                    dueDate: input.dueDate,
+                    status: "draft",
+                    clientId: project.clientId,
+                    projectId: project.id,
+                    orgId: user.orgId,
+                    notes: input.notes,
+                    paymentTerms: input.paymentTerms,
+                    lineItems: {
+                        create: input.lineItems.map((item) => ({
+                            description: item.description,
+                            qty: item.qty,
+                            rate: item.rate,
+                        })),
+                    },
+                    sources: {
+                        create: sourceRefs,
+                    },
+                },
+                include: { client: true, project: true, lineItems: true, sources: true },
+            });
+        }),
+
     updateStatus: protectedProcedure
         .input(z.object({ id: z.string(), status: z.string() }))
         .mutation(async ({ ctx, input }) => {
@@ -50,9 +240,9 @@ export const invoiceRouter = router({
     unbilledWork: protectedProcedure.query(async ({ ctx }) => {
         const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
         if (!user) return [];
-        // Get all billable time entries
+        // Get approved billable time entries
         const entries = await ctx.db.timeEntry.findMany({
-            where: { project: { orgId: user.orgId }, billable: true },
+            where: { project: { orgId: user.orgId }, billable: true, status: "approved" },
             include: { user: { select: { name: true, billRate: true } }, project: { select: { id: true, name: true } }, phase: { select: { name: true } } },
             orderBy: { date: "desc" },
         });
@@ -162,6 +352,7 @@ export const invoiceRouter = router({
                     projectId: input.projectId,
                     date: { gte: input.fromDate, lte: input.toDate },
                     billable: true,
+                    status: "approved",
                 },
                 include: { user: { select: { name: true } } },
                 orderBy: { date: "asc" },
@@ -226,6 +417,7 @@ export const invoiceRouter = router({
                         projectId,
                         date: { gte: input.fromDate, lte: input.toDate },
                         billable: true,
+                        status: "approved",
                     },
                     include: { user: { select: { name: true } } },
                 });

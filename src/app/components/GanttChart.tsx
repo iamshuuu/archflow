@@ -149,6 +149,9 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
     }, [projects, allPhases]);
 
     const totalHeight = HEADER_HEIGHT + rows.length * ROW_HEIGHT + 8;
+    const completePhases = allPhases.filter((phase) => phase.progress >= 100).length;
+    const avgProgress = allPhases.length > 0 ? Math.round(allPhases.reduce((sum, phase) => sum + phase.progress, 0) / allPhases.length) : 0;
+    const timelineMonths = Math.max(1, Math.ceil(totalDays / 30));
 
     const updateScrollMetrics = useCallback(() => {
         const el = scrollAreaRef.current;
@@ -318,7 +321,7 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
     return (
         <div
             style={{
-                borderRadius: "10px",
+                borderRadius: "14px",
                 border: "1px solid var(--border-primary)",
                 background: "var(--bg-card)",
                 overflow: "hidden",
@@ -328,19 +331,30 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
                 display: "flex",
                 flexDirection: "column",
                 contain: "inline-size",
+                boxShadow: "var(--shadow-card)",
             }}
         >
             {/* Zoom toolbar — stays fixed */}
             <div style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "10px 16px", borderBottom: "1px solid var(--border-primary)",
-                background: "var(--bg-warm)",
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px",
+                padding: "14px 16px", borderBottom: "1px solid var(--border-primary)",
+                background: "linear-gradient(135deg, var(--bg-card), var(--bg-warm))",
                 position: "sticky", top: 0, zIndex: 10,
                 width: "100%", maxWidth: "100%",
             }}>
-                <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>
-                    Timeline
-                </span>
+                <div>
+                    <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>Timeline</span>
+                    <div style={{ display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+                        {[
+                            `${allPhases.length} phases`,
+                            `${completePhases} complete`,
+                            `${avgProgress}% avg progress`,
+                            `${timelineMonths} mo span`,
+                        ].map((label) => (
+                            <span key={label} style={{ fontSize: "10px", color: "var(--text-muted)", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: "999px", padding: "3px 7px" }}>{label}</span>
+                        ))}
+                    </div>
+                </div>
                 <div style={{ display: "flex", gap: "2px", background: "var(--bg-secondary)", borderRadius: "6px", padding: "2px" }}>
                     {zoomOptions.map(opt => (
                         <button
@@ -351,8 +365,9 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
                                 border: "none", cursor: "pointer",
                                 fontSize: "11px", fontWeight: zoomLevel === opt.key ? 600 : 400,
                                 fontFamily: "inherit",
-                                color: zoomLevel === opt.key ? "white" : "var(--text-muted)",
-                                background: zoomLevel === opt.key ? "var(--accent-primary)" : "transparent",
+                                color: zoomLevel === opt.key ? "var(--text-primary)" : "var(--text-muted)",
+                                background: zoomLevel === opt.key ? "var(--bg-card)" : "transparent",
+                                boxShadow: zoomLevel === opt.key ? "var(--shadow-sm)" : "none",
                                 transition: "all 0.15s",
                             }}
                         >
@@ -379,6 +394,11 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
                 .gantt-scroll-area::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 5px; border: 2px solid var(--bg-secondary); }
                 .gantt-scroll-area::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
                 .gantt-scroll-area { scrollbar-width: thin; scrollbar-color: var(--border-secondary) var(--bg-secondary); }
+                .gantt-range-slider { height: 18px; background: transparent; }
+                .gantt-range-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: var(--bg-tertiary); border: 1px solid var(--border-primary); }
+                .gantt-range-slider::-webkit-slider-thumb { appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-primary); margin-top: -7px; border: 3px solid var(--bg-card); box-shadow: var(--shadow-md); }
+                .gantt-range-slider::-moz-range-track { height: 6px; border-radius: 999px; background: var(--bg-tertiary); border: 1px solid var(--border-primary); }
+                .gantt-range-slider::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent-primary); border: 3px solid var(--bg-card); box-shadow: var(--shadow-md); }
             `}</style>
                 <svg
                     ref={svgRef}
@@ -387,7 +407,7 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
                     style={{ display: "block", fontFamily: "inherit" }}
                 >
                     {/* Header background */}
-                    <rect x={0} y={0} width={totalWidth} height={HEADER_HEIGHT} fill="var(--bg-warm)" />
+                    <rect x={0} y={0} width={totalWidth} height={HEADER_HEIGHT} fill="var(--bg-secondary)" />
                     <line x1={0} y1={HEADER_HEIGHT} x2={totalWidth} y2={HEADER_HEIGHT} stroke="var(--border-primary)" strokeWidth={1} />
 
                     {/* Label column header */}
@@ -484,10 +504,10 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
                                         y={barY}
                                         width={barW}
                                         height={barH}
-                                        rx={4}
+                                        rx={8}
                                         fill={color}
-                                        opacity={0.15}
-                                        stroke={isHovered ? color : "none"}
+                                        opacity={0.12}
+                                        stroke={isHovered ? color : "var(--border-primary)"}
                                         strokeWidth={1}
                                         onMouseDown={(e) => onPhaseUpdate && handleMouseDown(e, phase.id, "move", phase.startDate, phase.endDate)}
                                     />
@@ -498,9 +518,9 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
                                             y={barY}
                                             width={barW * Math.min(phase.progress, 100) / 100}
                                             height={barH}
-                                            rx={4}
+                                            rx={8}
                                             fill={color}
-                                            opacity={0.5}
+                                            opacity={0.72}
                                             onMouseDown={(e) => onPhaseUpdate && handleMouseDown(e, phase.id, "move", phase.startDate, phase.endDate)}
                                         />
                                     )}
@@ -570,6 +590,7 @@ export default function GanttChart({ projects, onPhaseUpdate, zoomLevel: control
 
             <div style={{ padding: "8px 14px 10px", borderTop: "1px solid var(--border-primary)", background: "var(--bg-secondary)" }}>
                 <input
+                    className="gantt-range-slider"
                     type="range"
                     min={0}
                     max={Math.max(0, maxScrollLeft)}

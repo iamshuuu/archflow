@@ -49,6 +49,7 @@ export default function ExpensesPage() {
     const { formatCurrency } = useCurrencyFormatter();
     const { data: expenses = [], isLoading } = trpc.expense.list.useQuery();
     const { data: summary } = trpc.expense.summary.useQuery();
+    const { data: approvalContext } = trpc.expense.approvalContext.useQuery();
     const { data: projects = [] } = trpc.project.list.useQuery();
     const createExpense = trpc.expense.create.useMutation({ onSuccess: () => utils.expense.invalidate() });
     const updateExpense = trpc.expense.update.useMutation({ onSuccess: () => utils.expense.invalidate() });
@@ -74,6 +75,7 @@ export default function ExpensesPage() {
     const [formProject, setFormProject] = useState("");
     const [formBillable, setFormBillable] = useState(true);
     const [formNotes, setFormNotes] = useState("");
+    const canApproveExpenses = !!approvalContext?.canApprove;
 
     // Filter expenses
     const filtered = (expenses as any[]).filter((e: any) => {
@@ -163,7 +165,7 @@ export default function ExpensesPage() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px", marginBottom: "24px" }}>
                 {[
                     { label: "Total Expenses", value: formatCurrency(summary?.total || 0), icon: DollarSign, color: "var(--accent-primary)" },
-                    { label: "Pending", value: formatCurrency(summary?.pending || 0), icon: Clock, color: "var(--warning)" },
+                    { label: canApproveExpenses ? "Pending Review" : "Pending", value: formatCurrency(summary?.pending || 0), icon: Clock, color: "var(--warning)" },
                     { label: "Approved", value: formatCurrency(summary?.approved || 0), icon: Check, color: "var(--success)" },
                     { label: "Total Mileage", value: `${(summary?.mileage || 0).toLocaleString()} mi`, icon: Car, color: "var(--info)" },
                 ].map((card, i) => (
@@ -211,14 +213,14 @@ export default function ExpensesPage() {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                         <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
-                            {["Date", "Category", "Description", "Project", "Amount", "Status", ""].map((h) => (
+                            {["Date", "Category", "Description", "Submitted By", "Project", "Amount", "Status", "Actions"].map((h) => (
                                 <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
                         {filtered.length === 0 ? (
-                            <tr><td colSpan={7} style={{ padding: "40px", textAlign: "center", fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No expenses found. Click "Add Expense" to get started.</td></tr>
+                            <tr><td colSpan={8} style={{ padding: "40px", textAlign: "center", fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No expenses found. Click "Add Expense" to get started.</td></tr>
                         ) : filtered.map((exp: any) => {
                             const cat = CATEGORIES.find(c => c.value === exp.category);
                             const CatIcon = cat?.icon || MoreHorizontal;
@@ -236,18 +238,49 @@ export default function ExpensesPage() {
                                         <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{exp.description}</span>
                                         {exp.category === "mileage" && <span style={{ fontSize: "10px", color: "var(--text-muted)", marginLeft: "6px" }}>{exp.mileage} mi</span>}
                                     </td>
-                                    <td style={{ padding: "12px 14px", fontSize: "12px", color: "var(--text-muted)" }}>{exp.project?.name || "—"}</td>
+                                    <td style={{ padding: "12px 14px" }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+                                            <span style={{ width: "24px", height: "24px", borderRadius: "50%", display: "grid", placeItems: "center", background: "rgba(176,122,74,0.12)", color: "var(--accent-primary)", fontSize: "10px", fontWeight: 700 }}>
+                                                {(exp.user?.name || "U").split(" ").map((part: string) => part[0]).join("").slice(0, 2).toUpperCase()}
+                                            </span>
+                                            <div>
+                                                <p style={{ fontSize: "12px", color: "var(--text-primary)", fontWeight: 500 }}>{exp.user?.name || "Unknown"}</p>
+                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "capitalize" }}>{exp.user?.role || "member"}</p>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td style={{ padding: "12px 14px", fontSize: "12px", color: "var(--text-muted)" }}>{exp.project?.name || "-"}</td>
                                     <td style={{ padding: "12px 14px", fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{formatCurrency(exp.amount)}</td>
                                     <td style={{ padding: "12px 14px" }}>
                                         <span style={{ fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", textTransform: "uppercase", letterSpacing: "0.04em", color: ss.color, background: ss.bg }}>{ss.label}</span>
                                     </td>
                                     <td style={{ padding: "12px 14px" }}>
-                                        <button
-                                            onClick={() => { if (confirm("Delete this expense?")) deleteExpense.mutate({ id: exp.id }); }}
-                                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "11px", padding: "4px 8px", borderRadius: "4px" }}
-                                            onMouseEnter={e => e.currentTarget.style.color = "var(--danger)"}
-                                            onMouseLeave={e => e.currentTarget.style.color = "var(--text-muted)"}
-                                        >✕</button>
+                                        <div style={{ display: "flex", gap: "6px", alignItems: "center", justifyContent: "flex-end" }}>
+                                            {canApproveExpenses && exp.status === "pending" && (
+                                                <>
+                                                    <button
+                                                        onClick={() => updateExpense.mutate({ id: exp.id, status: "approved" })}
+                                                        style={{ padding: "5px 8px", borderRadius: "5px", border: "1px solid rgba(90,122,70,0.18)", background: "rgba(90,122,70,0.08)", color: "var(--success)", cursor: "pointer", fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}
+                                                    >Approve</button>
+                                                    <button
+                                                        onClick={() => updateExpense.mutate({ id: exp.id, status: "rejected" })}
+                                                        style={{ padding: "5px 8px", borderRadius: "5px", border: "1px solid rgba(176,80,64,0.18)", background: "rgba(176,80,64,0.08)", color: "var(--danger)", cursor: "pointer", fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}
+                                                    >Reject</button>
+                                                </>
+                                            )}
+                                            {canApproveExpenses && exp.status === "approved" && (
+                                                <button
+                                                    onClick={() => updateExpense.mutate({ id: exp.id, status: "reimbursed" })}
+                                                    style={{ padding: "5px 8px", borderRadius: "5px", border: "1px solid rgba(90,122,144,0.18)", background: "rgba(90,122,144,0.08)", color: "var(--info)", cursor: "pointer", fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}
+                                                >Reimburse</button>
+                                            )}
+                                            <button
+                                                onClick={() => { if (confirm("Delete this expense?")) deleteExpense.mutate({ id: exp.id }); }}
+                                                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "11px", padding: "4px 8px", borderRadius: "4px" }}
+                                                onMouseEnter={e => e.currentTarget.style.color = "var(--danger)"}
+                                                onMouseLeave={e => e.currentTarget.style.color = "var(--text-muted)"}
+                                            >x</button>
+                                        </div>
                                     </td>
                                 </tr>
                             );
@@ -438,3 +471,5 @@ export default function ExpensesPage() {
         </div>
     );
 }
+
+

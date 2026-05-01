@@ -32,11 +32,11 @@ const statusConfig: Record<ProjectStatus, { label: string; color: string; bg: st
 };
 
 const pipelineStages = [
-    { key: "lead", label: "Lead", color: "var(--info)" },
-    { key: "proposal", label: "Proposal", color: "var(--accent-primary)" },
-    { key: "negotiation", label: "Negotiation", color: "var(--warning)" },
-    { key: "won", label: "Won", color: "var(--success)" },
-    { key: "lost", label: "Lost", color: "var(--danger)" },
+    { key: "lead", label: "Lead", color: "var(--info)", probability: 20 },
+    { key: "proposal", label: "Proposal", color: "var(--accent-primary)", probability: 45 },
+    { key: "negotiation", label: "Negotiation", color: "var(--warning)", probability: 70 },
+    { key: "won", label: "Won", color: "var(--success)", probability: 100 },
+    { key: "lost", label: "Lost", color: "var(--danger)", probability: 0 },
 ] as const;
 
 export default function ProjectsPage() {
@@ -111,6 +111,12 @@ export default function ProjectsPage() {
         "on-hold": projects.filter((p: any) => p.status === "on-hold").length,
         completed: projects.filter((p: any) => p.status === "completed").length,
     };
+    const pipelineProjects = filtered.filter((p: any) => p.status === "pipeline" || p.pipelineStage !== "lead" || section === "pipeline");
+    const stageProbability = Object.fromEntries(pipelineStages.map((stage) => [stage.key, stage.probability])) as Record<string, number>;
+    const pipelineValue = pipelineProjects.reduce((sum: number, project: any) => sum + project.contractValue, 0);
+    const weightedPipelineValue = pipelineProjects.reduce((sum: number, project: any) => sum + project.contractValue * ((stageProbability[project.pipelineStage] ?? 0) / 100), 0);
+    const winReadyProjects = pipelineProjects.filter((project: any) => project.pipelineStage === "negotiation" || project.pipelineStage === "won").length;
+    const lostPipelineValue = pipelineProjects.filter((project: any) => project.pipelineStage === "lost").reduce((sum: number, project: any) => sum + project.contractValue, 0);
 
     if (isLoading) {
         return (
@@ -333,57 +339,93 @@ export default function ProjectsPage() {
 
             {/* Pipeline / Kanban view */}
             {section === "pipeline" && (
-                <div style={{ display: "flex", gap: "14px", overflowX: "auto", paddingBottom: "16px" }}>
-                    {pipelineStages.map(stage => {
-                        const stageProjects = filtered.filter((p: any) => p.pipelineStage === stage.key);
-                        const stageTotal = stageProjects.reduce((s: number, p: any) => s + p.contractValue, 0);
-                        return (
-                            <div key={stage.key} style={{ minWidth: "260px", flex: "1", display: "flex", flexDirection: "column" }}
-                                onDragOver={e => e.preventDefault()}
-                                onDrop={e => {
-                                    const id = e.dataTransfer.getData("projectId");
-                                    if (id) updateStage.mutate({ id, pipelineStage: stage.key });
-                                }}>
-                                <div style={{ padding: "12px 14px", borderRadius: "8px 8px 0 0", background: "var(--bg-card)", border: "1px solid var(--border-primary)", borderBottom: `2px solid ${stage.color}` }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                        <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>{stage.label}</span>
-                                        <span style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 500 }}>{stageProjects.length}</span>
-                                    </div>
-                                    <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(stageTotal)}</p>
-                                </div>
-                                <div style={{ flex: 1, padding: "8px", background: "var(--bg-warm)", borderRadius: "0 0 8px 8px", border: "1px solid var(--border-primary)", borderTop: "none", display: "flex", flexDirection: "column", gap: "8px", minHeight: "200px" }}>
-                                    {stageProjects.map((proj: any) => {
-                                        const sc = statusConfig[proj.status as ProjectStatus] || statusConfig.active;
-                                        return (
-                                            <div key={proj.id} draggable
-                                                onDragStart={e => e.dataTransfer.setData("projectId", proj.id)}
-                                                style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", cursor: "grab", transition: "all 0.15s" }}
-                                                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}>
-                                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                                                    <Link href={`/dashboard/projects/${proj.id}`} style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)", textDecoration: "none" }}>{proj.name}</Link>
-                                                    <GripVertical size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-                                                </div>
-                                                <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}>{proj.client}</p>
-                                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px" }}>
-                                                    <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(proj.contractValue)}</span>
-                                                    <span style={{ fontSize: "9px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", color: sc.color, background: sc.bg }}>{sc.label}</span>
-                                                </div>
-                                                <div style={{ marginTop: "8px", height: "3px", borderRadius: "2px", background: "var(--bg-tertiary)" }}>
-                                                    <div style={{ height: "100%", borderRadius: "2px", width: `${proj.progress}%`, background: stage.color, transition: "width 0.3s" }} />
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                    {stageProjects.length === 0 && (
-                                        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-                                            <p style={{ fontSize: "11px", color: "var(--text-muted)", fontStyle: "italic" }}>Drop projects here</p>
-                                        </div>
-                                    )}
-                                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
+                        {[
+                            { label: "Open Pipeline", value: formatCurrency(pipelineValue), meta: `${pipelineProjects.length} opportunities` },
+                            { label: "Weighted Forecast", value: formatCurrency(weightedPipelineValue), meta: "Probability adjusted" },
+                            { label: "Late Stage", value: String(winReadyProjects), meta: "Negotiation or won" },
+                            { label: "Lost Value", value: formatCurrency(lostPipelineValue), meta: "Review lessons learned" },
+                        ].map((metric) => (
+                            <div key={metric.label} style={{ padding: "16px", borderRadius: "8px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                                <p style={{ fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{metric.label}</p>
+                                <p style={{ marginTop: "8px", fontSize: "20px", color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{metric.value}</p>
+                                <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-muted)" }}>{metric.meta}</p>
                             </div>
-                        );
-                    })}
+                        ))}
+                    </div>
+                    <div style={{ display: "flex", gap: "14px", overflowX: "auto", paddingBottom: "16px" }}>
+                        {pipelineStages.map(stage => {
+                            const stageProjects = pipelineProjects.filter((p: any) => p.pipelineStage === stage.key);
+                            const stageTotal = stageProjects.reduce((s: number, p: any) => s + p.contractValue, 0);
+                            const stageWeighted = stageTotal * (stage.probability / 100);
+                            return (
+                                <div key={stage.key} style={{ minWidth: "280px", flex: "1", display: "flex", flexDirection: "column" }}
+                                    onDragOver={e => e.preventDefault()}
+                                    onDrop={e => {
+                                        const id = e.dataTransfer.getData("projectId");
+                                        if (id) updateStage.mutate({ id, pipelineStage: stage.key });
+                                    }}>
+                                    <div style={{ padding: "14px", borderRadius: "8px 8px 0 0", background: "var(--bg-card)", border: "1px solid var(--border-primary)", borderBottom: `2px solid ${stage.color}` }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                            <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>{stage.label}</span>
+                                            <span style={{ fontSize: "10px", color: stage.color, fontWeight: 700 }}>{stage.probability}%</span>
+                                        </div>
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px" }}>
+                                            <div>
+                                                <p style={{ fontSize: "9px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Value</p>
+                                                <p style={{ fontSize: "13px", color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(stageTotal)}</p>
+                                            </div>
+                                            <div>
+                                                <p style={{ fontSize: "9px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Forecast</p>
+                                                <p style={{ fontSize: "13px", color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(stageWeighted)}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div style={{ flex: 1, padding: "8px", background: "var(--bg-warm)", borderRadius: "0 0 8px 8px", border: "1px solid var(--border-primary)", borderTop: "none", display: "flex", flexDirection: "column", gap: "8px", minHeight: "260px" }}>
+                                        {stageProjects.map((proj: any) => {
+                                            const sc = statusConfig[proj.status as ProjectStatus] || statusConfig.active;
+                                            return (
+                                                <div key={proj.id} draggable
+                                                    onDragStart={e => e.dataTransfer.setData("projectId", proj.id)}
+                                                    style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", cursor: "grab", transition: "all 0.15s" }}
+                                                    onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"; }}
+                                                    onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
+                                                        <Link href={`/dashboard/projects/${proj.id}`} style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)", textDecoration: "none" }}>{proj.name}</Link>
+                                                        <GripVertical size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                                                    </div>
+                                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}>{proj.client} | {proj.type}</p>
+                                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "12px" }}>
+                                                        <div>
+                                                            <p style={{ fontSize: "9px", color: "var(--text-muted)", textTransform: "uppercase" }}>Contract</p>
+                                                            <p style={{ fontSize: "12px", color: "var(--text-secondary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(proj.contractValue)}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p style={{ fontSize: "9px", color: "var(--text-muted)", textTransform: "uppercase" }}>Weighted</p>
+                                                            <p style={{ fontSize: "12px", color: "var(--text-secondary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(proj.contractValue * (stage.probability / 100))}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px" }}>
+                                                        <span style={{ fontSize: "9px", fontWeight: 600, padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", color: sc.color, background: sc.bg }}>{sc.label}</span>
+                                                        <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{proj.progress}% delivery</span>
+                                                    </div>
+                                                    <div style={{ marginTop: "8px", height: "3px", borderRadius: "2px", background: "var(--bg-tertiary)" }}>
+                                                        <div style={{ height: "100%", borderRadius: "2px", width: `${proj.progress}%`, background: stage.color, transition: "width 0.3s" }} />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {stageProjects.length === 0 && (
+                                            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", border: "1px dashed var(--border-secondary)", borderRadius: "8px" }}>
+                                                <p style={{ fontSize: "11px", color: "var(--text-muted)", fontStyle: "italic" }}>Drop projects here</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             )}
 

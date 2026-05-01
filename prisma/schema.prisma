@@ -271,6 +271,12 @@ model TimeEntry {
 
   phaseId String
   phase   Phase @relation(fields: [phaseId], references: [id])
+
+  deliverableId String?
+  deliverable   Deliverable? @relation(fields: [deliverableId], references: [id], onDelete: SetNull)
+
+  taskId String?
+  task   Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
 }
 
 // ─── Time Off Request ───
@@ -336,6 +342,7 @@ model Invoice {
 
   lineItems InvoiceLineItem[]
   payments  Payment[]
+  sources   InvoiceSource[]
 }
 
 // ─── Invoice Template ───
@@ -367,6 +374,18 @@ model InvoiceLineItem {
 
   invoiceId String
   invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model InvoiceSource {
+  id         String @id @default(cuid())
+  sourceType String
+  sourceId   String
+
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceType, sourceId])
+  @@index([invoiceId])
 }
 
 // ─── Payment ───
@@ -501,11 +520,16 @@ model ProjectTemplate {
 // ─── Task ───
 
 model Task {
-  id        String @id @default(cuid())
-  title     String
-  status    String @default("todo") // todo | in-progress | review | done
-  dueDate   String @default("")
-  sortOrder Int    @default(0)
+  id             String  @id @default(cuid())
+  title          String
+  description    String  @default("")
+  status         String  @default("todo") // todo | in-progress | review | done
+  priority       String  @default("medium") // low | medium | high | urgent
+  dueDate        String  @default("")
+  estimatedHours Float   @default(0)
+  actualHours    Float   @default(0)
+  billable       Boolean @default(true)
+  sortOrder      Int     @default(0)
 
   phaseId String
   phase   Phase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
@@ -513,8 +537,13 @@ model Task {
   projectId String
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
+  deliverableId String?
+  deliverable   Deliverable? @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+
   assigneeId String?
   assignee   User? @relation(fields: [assigneeId], references: [id])
+
+  timeEntries TimeEntry[]
 }
 
 // ─── Project File ───
@@ -562,4 +591,7 @@ model Deliverable {
 
   assigneeId String?
   assignee   User? @relation(fields: [assigneeId], references: [id])
+
+  tasks Task[]
+  timeEntries TimeEntry[]
 }

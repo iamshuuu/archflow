@@ -39,7 +39,6 @@ const navItems = [
     { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
     { label: "Projects", href: "/dashboard/projects", icon: FolderKanban },
     { label: "Time", href: "/dashboard/time", icon: Clock },
-    { label: "Budgets", href: "/dashboard/budgets", icon: DollarSign },
     { label: "Expenses", href: "/dashboard/expenses", icon: Receipt },
     { label: "Money", href: "/dashboard/invoices", icon: FileText },
     { label: "Team", href: "/dashboard/team", icon: Users },
@@ -459,7 +458,7 @@ export default function DashboardLayout({
                             borderBottom: "1px solid var(--border-primary)",
                             display: "flex",
                             alignItems: "center",
-                            justifyContent: "space-between",
+                            justifyContent: isMobile ? "space-between" : "center",
                             padding: isMobile ? "0 16px" : "0 28px",
                         }}
                     >
@@ -481,7 +480,7 @@ export default function DashboardLayout({
                         {/* Search — opens command palette */}
                         <div
                             onClick={() => setCmdPaletteOpen(true)}
-                            style={{ display: "flex", alignItems: "center", gap: "8px", background: "var(--bg-secondary)", borderRadius: "6px", padding: "8px 14px", maxWidth: isMobile ? "100%" : "360px", width: "100%", border: "1px solid var(--border-primary)", cursor: "pointer" }}
+                            style={{ display: "flex", alignItems: "center", gap: "8px", background: "var(--bg-secondary)", borderRadius: "6px", padding: "8px 14px", maxWidth: isMobile ? "100%" : "360px", width: "100%", border: "1px solid var(--border-primary)", cursor: "pointer", margin: isMobile ? "0" : "0 auto" }}
                         >
                             <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
                             <span style={{ flex: 1, fontSize: "13px", color: "var(--text-muted)", fontFamily: "inherit" }}>Search projects, clients, invoices...</span>
@@ -489,7 +488,7 @@ export default function DashboardLayout({
                         </div>
 
                         {/* Actions — Notification Bell */}
-                        <div ref={notifRef} style={{ display: "flex", alignItems: "center", gap: "8px", position: "relative" }}>
+                        <div ref={notifRef} style={{ display: "flex", alignItems: "center", gap: "8px", position: isMobile ? "relative" : "absolute", right: isMobile ? undefined : "28px" }}>
                             <button
                                 onClick={() => setShowNotifs(!showNotifs)}
                                 style={{

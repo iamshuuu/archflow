@@ -1,8 +1,8 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { trpc } from "@/app/providers";
 import {
     ArrowLeft,
@@ -33,7 +33,7 @@ import {
 import GanttChart from "@/app/components/GanttChart";
 import { useCurrencyFormatter } from "../../useCurrencyFormatter";
 
-/* â”€â”€â”€ Types â”€â”€â”€ */
+/* ─── Types ─── */
 
 interface Phase {
     id: string;
@@ -69,8 +69,26 @@ const phaseStatusColors: Record<string, { dot: string; text: string; bg: string 
     upcoming: { dot: "var(--text-muted)", text: "var(--text-muted)", bg: "var(--bg-warm)" },
 };
 
+const taskProgressValue = (status: string) => {
+    if (status === "done") return 100;
+    if (status === "review") return 75;
+    if (status === "in-progress") return 50;
+    return 0;
+};
+
+const deliverableProgressValue = (deliverable: any) => {
+    const tasks = (deliverable?.tasks || []) as any[];
+    if (tasks.length > 0) {
+        return Math.round(tasks.reduce((sum, task) => sum + taskProgressValue(task.status), 0) / tasks.length);
+    }
+    if (deliverable?.status === "completed" || deliverable?.status === "approved") return 100;
+    if (deliverable?.status === "in-progress") return 50;
+    return 0;
+};
+
 export default function ProjectDetailPage() {
     const params = useParams();
+    const router = useRouter();
     const projectId = params?.id as string;
     const { formatCurrency } = useCurrencyFormatter();
     const { data: rawProject, isLoading } = trpc.project.getById.useQuery({ id: projectId }, { enabled: !!projectId });
@@ -85,7 +103,18 @@ export default function ProjectDetailPage() {
     const [newPhase, setNewPhase] = useState({ name: "", budgetHours: "", budgetAmount: "", feeType: "hourly", startDate: "", endDate: "" });
     const [newFile, setNewFile] = useState({ name: "", url: "", fileType: "other", phaseId: "" });
     const [editForm, setEditForm] = useState({ name: "", type: "", contractValue: "", startDate: "", endDate: "", status: "" });
-    const [newTask, setNewTask] = useState({ title: "", phaseId: "", assigneeId: "", dueDate: "" });
+    const [newTask, setNewTask] = useState({
+        title: "",
+        description: "",
+        phaseId: "",
+        deliverableId: "",
+        assigneeId: "",
+        dueDate: "",
+        priority: "medium",
+        estimatedHours: "",
+        actualHours: "",
+        billable: true,
+    });
     const [budgetDrafts, setBudgetDrafts] = useState<Record<string, { name: string; budgetHours: string; budgetAmount: string; feeType: string; startDate: string; endDate: string }>>({});
     const [savingBudgetPhaseId, setSavingBudgetPhaseId] = useState<string | null>(null);
     const [milestoneDrafts, setMilestoneDrafts] = useState<Record<string, { name: string; description: string; date: string }>>({});
@@ -93,6 +122,9 @@ export default function ProjectDetailPage() {
     const [deliverableDrafts, setDeliverableDrafts] = useState<Record<string, { title: string; description: string; dueDate: string; assigneeId: string }>>({});
     const [editingAssignmentId, setEditingAssignmentId] = useState<string | null>(null);
     const [assignmentEditDrafts, setAssignmentEditDrafts] = useState<Record<string, { plannedHours: string; billRate: string }>>({});
+    const [showInvoiceBuilder, setShowInvoiceBuilder] = useState(false);
+    const [invoiceDraftLines, setInvoiceDraftLines] = useState<any[]>([]);
+    const [invoiceMetaDraft, setInvoiceMetaDraft] = useState({ date: "", dueDate: "", notes: "" });
 
     const utils = trpc.useUtils();
 
@@ -108,10 +140,22 @@ export default function ProjectDetailPage() {
     const { data: budgetData } = trpc.project.budgetControl.useQuery({ projectId }, { enabled: !!projectId });
     const { data: files = [] } = trpc.project.listFiles.useQuery({ projectId }, { enabled: !!projectId });
     const { data: deliverables = [] } = trpc.project.listDeliverables.useQuery({ projectId }, { enabled: !!projectId });
+    const { data: invoicePreview, isLoading: invoicePreviewLoading } = trpc.invoice.projectInvoicePreview.useQuery(
+        { projectId },
+        { enabled: !!projectId && showInvoiceBuilder }
+    );
 
-    const createTask = trpc.project.createTask.useMutation({ onSuccess: () => { utils.project.listTasks.invalidate(); setNewTask({ title: "", phaseId: "", assigneeId: "", dueDate: "" }); setShowNewTask(false); } });
-    const updateTask = trpc.project.updateTask.useMutation({ onSuccess: () => utils.project.listTasks.invalidate() });
-    const deleteTask = trpc.project.deleteTask.useMutation({ onSuccess: () => utils.project.listTasks.invalidate() });
+    const resetTaskDraft = () => setNewTask({ title: "", description: "", phaseId: "", deliverableId: "", assigneeId: "", dueDate: "", priority: "medium", estimatedHours: "", actualHours: "", billable: true });
+    const refreshTaskExecution = () => {
+        utils.project.listTasks.invalidate();
+        utils.project.listDeliverables.invalidate();
+        utils.project.getById.invalidate();
+        utils.project.schedule.invalidate();
+        utils.project.budgetControl.invalidate();
+    };
+    const createTask = trpc.project.createTask.useMutation({ onSuccess: () => { refreshTaskExecution(); resetTaskDraft(); setShowNewTask(false); } });
+    const updateTask = trpc.project.updateTask.useMutation({ onSuccess: refreshTaskExecution });
+    const deleteTask = trpc.project.deleteTask.useMutation({ onSuccess: refreshTaskExecution });
     const addPhaseMut = trpc.project.addPhase.useMutation({ onSuccess: () => { utils.project.getById.invalidate(); setNewPhase({ name: "", budgetHours: "", budgetAmount: "", feeType: "hourly", startDate: "", endDate: "" }); setShowAddPhase(false); } });
     const deletePhaseMut = trpc.project.deletePhase.useMutation({ onSuccess: () => utils.project.getById.invalidate() });
     const updatePhaseMut = trpc.project.updatePhase.useMutation({
@@ -169,6 +213,14 @@ export default function ProjectDetailPage() {
     const removePhaseAssignmentMut = trpc.project.removePhaseAssignment.useMutation({
         onSuccess: () => utils.project.getById.invalidate(),
     });
+    const createProjectInvoiceMut = trpc.invoice.createProjectDraft.useMutation({
+        onSuccess: () => {
+            utils.invoice.list.invalidate();
+            utils.project.budgetControl.invalidate();
+            setShowInvoiceBuilder(false);
+            router.push("/dashboard/invoices");
+        },
+    });
 
     const taskStatusCycle = ["todo", "in-progress", "review", "done"] as const;
     const taskStatusConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
@@ -193,9 +245,12 @@ export default function ProjectDetailPage() {
         phases: ((rawProject as any).phases || []).map((p: any, i: number, arr: any[]) => {
             const totalHours = (p.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
             const budgetHours = p.budgetHours || 0;
+            const phaseDeliverables = (p.deliverables || []) as any[];
             const milestoneCount = (p.milestones || []).length;
             const completedMilestones = (p.milestones || []).filter((ms: any) => ms.done).length;
-            const progress = milestoneCount > 0
+            const progress = phaseDeliverables.length > 0
+                ? Math.round(phaseDeliverables.reduce((sum, deliverable) => sum + deliverableProgressValue(deliverable), 0) / phaseDeliverables.length)
+                : milestoneCount > 0
                 ? Math.round((completedMilestones / milestoneCount) * 100)
                 : budgetHours > 0 ? Math.min(100, Math.round((totalHours / budgetHours) * 100)) : 0;
             const isComplete = progress >= 100;
@@ -205,7 +260,11 @@ export default function ProjectDetailPage() {
                 status: isComplete ? "completed" as const : (i === 0 || arr.slice(0, i).every((prev: any) => {
                     const prevHrs = (prev.timeEntries || []).reduce((s: number, te: any) => s + te.hours, 0);
                     const prevBudget = prev.budgetHours || 0;
+                    const prevDeliverables = (prev.deliverables || []) as any[];
                     const prevMilestoneCount = (prev.milestones || []).length;
+                    if (prevDeliverables.length > 0) {
+                        return prevDeliverables.every((deliverable) => deliverableProgressValue(deliverable) >= 100);
+                    }
                     if (prevMilestoneCount > 0) {
                         const prevCompletedMilestones = (prev.milestones || []).filter((milestone: any) => milestone.done).length;
                         return prevCompletedMilestones >= prevMilestoneCount;
@@ -262,6 +321,16 @@ export default function ProjectDetailPage() {
     }, [budgetData]);
 
     useEffect(() => {
+        if (!invoicePreview) return;
+        setInvoiceDraftLines((invoicePreview.lineItems || []).map((line: any) => ({ ...line, included: true })));
+        setInvoiceMetaDraft({
+            date: invoicePreview.issueDate || new Date().toISOString().slice(0, 10),
+            dueDate: invoicePreview.dueDate || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+            notes: `Draft invoice for ${invoicePreview.project?.name || "project"} unbilled work and expenses.`,
+        });
+    }, [invoicePreview]);
+
+    useEffect(() => {
         if (!project) return;
         setMilestoneDrafts(Object.fromEntries(project.phases.map((phase) => [phase.id, { name: "", description: "", date: "" }])));
         setPhaseStaffDrafts(Object.fromEntries(project.phases.map((phase) => [phase.id, { userId: "", roleLabel: "", plannedHours: "", billRate: "" }])));
@@ -305,13 +374,21 @@ export default function ProjectDetailPage() {
     const totalBudgetHours = project.phases.reduce((s, p) => s + p.budgetHours, 0);
     const totalUsedHours = project.phases.reduce((s, p) => s + p.usedHours, 0);
     const totalFee = project.phases.reduce((s, p) => s + p.fee, 0);
-    const overallProgress = totalBudgetHours > 0
-        ? Math.max(0, Math.min(100, Math.round((totalUsedHours / totalBudgetHours) * 100)))
-        : (project.phases.length > 0 ? Math.round(project.phases.reduce((s, p) => s + p.progress, 0) / project.phases.length) : 0);
+    const overallProgress = project.phases.length > 0
+        ? Math.round(project.phases.reduce((s, p) => s + p.progress, 0) / project.phases.length)
+        : 0;
     const todayIso = new Date().toISOString().slice(0, 10);
     const sevenDaysIso = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
     const taskRows = tasks as any[];
     const deliverableRows = deliverables as any[];
+    const selectedTaskPhase = project.phases.find((phase) => phase.id === newTask.phaseId);
+    const selectableTaskDeliverables = deliverableRows.filter((deliverable) => deliverable.phaseId === newTask.phaseId);
+    const selectableTaskMembers = selectedTaskPhase?.assignments || [];
+    const completedTasks = taskRows.filter((t) => t.status === "done").length;
+    const reviewTasks = taskRows.filter((t) => t.status === "review").length;
+    const blockedTaskProxy = taskRows.filter((t) => t.priority === "urgent" && t.status !== "done").length;
+    const taskCompletionPct = taskRows.length > 0 ? Math.round((completedTasks / taskRows.length) * 100) : 0;
+    const billableTaskHours = taskRows.filter((t) => t.billable).reduce((sum, task) => sum + (Number(task.estimatedHours) || 0), 0);
     const overdueTasks = taskRows.filter((t) => t.status !== "done" && t.dueDate && t.dueDate < todayIso).length;
     const dueSoonTasks = taskRows.filter((t) => t.status !== "done" && t.dueDate && t.dueDate >= todayIso && t.dueDate <= sevenDaysIso).length;
     const unassignedTasks = taskRows.filter((t) => t.status !== "done" && !t.assigneeId).length;
@@ -365,6 +442,27 @@ export default function ProjectDetailPage() {
         const endLabel = asInputDate(end) || end;
         if (startLabel && endLabel && startLabel !== "-" && endLabel !== "-") return `${startLabel} - ${endLabel}`;
         return startLabel && startLabel !== "-" ? startLabel : endLabel && endLabel !== "-" ? endLabel : "No dates set";
+    };
+    const includedInvoiceLines = invoiceDraftLines.filter((line) => line.included);
+    const invoiceDraftTotal = includedInvoiceLines.reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.rate || 0), 0);
+    const updateInvoiceLine = (index: number, field: "included" | "description" | "qty" | "rate", value: string | boolean) => {
+        setInvoiceDraftLines((prev) => prev.map((line, i) => i === index ? { ...line, [field]: value } : line));
+    };
+    const createProjectInvoice = async () => {
+        if (includedInvoiceLines.length === 0) return;
+        await createProjectInvoiceMut.mutateAsync({
+            projectId,
+            date: invoiceMetaDraft.date,
+            dueDate: invoiceMetaDraft.dueDate,
+            notes: invoiceMetaDraft.notes,
+            lineItems: includedInvoiceLines.map((line) => ({
+                description: line.description,
+                qty: Number(line.qty || 0),
+                rate: Number(line.rate || 0),
+                sourceType: line.sourceType,
+                sourceIds: line.sourceIds || [],
+            })),
+        });
     };
 
     const handleGanttPhaseUpdate = async (phaseId: string, startDate: string, endDate: string) => {
@@ -553,7 +651,7 @@ export default function ProjectDetailPage() {
                         <button onClick={() => { setEditForm({ name: project.name, type: project.type, contractValue: String(project.contractValue), startDate: project.startDate === "-" ? "" : project.startDate, endDate: project.endDate === "-" ? "" : project.endDate, status: project.status }); setShowEditProject(true); }} style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-secondary)" }}>
                             <Edit3 size={13} /> Edit
                         </button>
-                        <button style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "white", fontWeight: 500 }}>
+                        <button onClick={() => setShowInvoiceBuilder(true)} style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "white", fontWeight: 500 }}>
                             <FileText size={13} /> Invoice
                         </button>
                     </div>
@@ -1010,104 +1108,215 @@ export default function ProjectDetailPage() {
 
             {/* Tasks tab */}
             {activeTab === "tasks" && (
-                <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
-                    <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div>
-                            <h3 style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Tasks</h3>
-                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>{(tasks as any[]).length} tasks | {(tasks as any[]).filter((t: any) => t.status === "done").length} completed</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <div style={{ padding: "22px 24px", borderRadius: "14px", background: "linear-gradient(135deg, var(--bg-card), var(--bg-warm))", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", flexWrap: "wrap", marginBottom: "18px" }}>
+                            <div>
+                                <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Execution Tasks</h3>
+                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: 1.6 }}>
+                                    Tasks now live under deliverables. Finishing tasks moves deliverables, milestones, phases, and project progress forward.
+                                </p>
+                            </div>
+                            <button onClick={() => setShowNewTask(!showNewTask)}
+                                style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 15px", borderRadius: "8px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 600, cursor: "pointer", boxShadow: "var(--shadow-sm)" }}>
+                                <Plus size={13} /> {showNewTask ? "Close" : "Add Task"}
+                            </button>
                         </div>
-                        <button onClick={() => setShowNewTask(!showNewTask)}
-                            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer" }}>
-                            <Plus size={13} /> Add Task
-                        </button>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px" }}>
+                            {[
+                                { label: "Tasks", value: taskRows.length, meta: `${completedTasks} completed` },
+                                { label: "Completion", value: `${taskCompletionPct}%`, meta: "Done tasks / total" },
+                                { label: "In Review", value: reviewTasks, meta: "Waiting for check" },
+                                { label: "Overdue", value: overdueTasks, meta: dueSoonTasks > 0 ? `${dueSoonTasks} due soon` : "No near due dates" },
+                                { label: "Unassigned", value: unassignedTasks, meta: "Needs ownership" },
+                                { label: "Billable Est.", value: `${billableTaskHours}h`, meta: `${blockedTaskProxy} urgent open` },
+                            ].map((metric) => (
+                                <div key={metric.label} style={{ padding: "14px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)" }}>
+                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "7px" }}>{metric.label}</p>
+                                    <p style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)" }}>{metric.value}</p>
+                                    <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "5px" }}>{metric.meta}</p>
+                                </div>
+                            ))}
+                        </div>
                     </div>
 
-                    {/* New task form */}
                     {showNewTask && (
-                        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
-                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end" }}>
-                                <div style={{ flex: 2, minWidth: "180px" }}>
-                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Title *</label>
-                                    <input type="text" value={newTask.title} onChange={(e) => setNewTask(p => ({ ...p, title: e.target.value }))} placeholder="Task title" style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
-                                </div>
-                                <div style={{ flex: 1, minWidth: "120px" }}>
-                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Phase *</label>
-                                    <select value={newTask.phaseId} onChange={(e) => setNewTask(p => ({ ...p, phaseId: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                        <div style={{ padding: "18px 20px", borderRadius: "14px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", boxShadow: "var(--shadow-card)" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "12px", alignItems: "end" }}>
+                                <div>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Phase *</label>
+                                    <select value={newTask.phaseId} onChange={(e) => setNewTask(p => ({ ...p, phaseId: e.target.value, deliverableId: "", assigneeId: "", dueDate: "" }))} style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
                                         <option value="">Select phase...</option>
-                                        {project.phases.map((ph: any) => <option key={ph.id} value={ph.id}>{ph.name}</option>)}
+                                        {project.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
                                     </select>
                                 </div>
-                                <div style={{ flex: 1, minWidth: "120px" }}>
-                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Assignee</label>
-                                    <select value={newTask.assigneeId} onChange={(e) => setNewTask(p => ({ ...p, assigneeId: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
-                                        <option value="">Unassigned</option>
-                                        {(teamMembers as any[]).map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                <div>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Deliverable *</label>
+                                    <select value={newTask.deliverableId} disabled={!newTask.phaseId || selectableTaskDeliverables.length === 0} onChange={(e) => setNewTask(p => ({ ...p, deliverableId: e.target.value }))} style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: selectableTaskDeliverables.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: selectableTaskDeliverables.length === 0 ? 0.65 : 1 }}>
+                                        <option value="">{newTask.phaseId ? "Select deliverable..." : "Select phase first"}</option>
+                                        {selectableTaskDeliverables.map((deliverable) => <option key={deliverable.id} value={deliverable.id}>{deliverable.title}</option>)}
                                     </select>
                                 </div>
-                                <div style={{ flex: 1, minWidth: "120px" }}>
-                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Due Date</label>
-                                    <input type="date" value={newTask.dueDate} onChange={(e) => setNewTask(p => ({ ...p, dueDate: e.target.value }))} style={{ width: "100%", padding: "8px 10px", borderRadius: "5px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                <div>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Phase Team Member</label>
+                                    <select value={newTask.assigneeId} disabled={!newTask.phaseId || selectableTaskMembers.length === 0} onChange={(e) => setNewTask(p => ({ ...p, assigneeId: e.target.value }))} style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: selectableTaskMembers.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: selectableTaskMembers.length === 0 ? 0.65 : 1 }}>
+                                        <option value="">{selectableTaskMembers.length === 0 ? "Assign phase team first" : "Unassigned"}</option>
+                                        {selectableTaskMembers.map((assignment) => <option key={assignment.user.id} value={assignment.user.id}>{assignment.user.name} - {assignment.roleLabel || assignment.user.title || "Team"}</option>)}
+                                    </select>
                                 </div>
-                                <button onClick={() => { if (!newTask.title || !newTask.phaseId) return; createTask.mutate({ projectId, phaseId: newTask.phaseId, title: newTask.title, assigneeId: newTask.assigneeId || undefined, dueDate: newTask.dueDate }); }}
-                                    disabled={!newTask.title || !newTask.phaseId || createTask.isPending}
-                                    style={{ padding: "8px 16px", borderRadius: "5px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 500, cursor: "pointer", opacity: !newTask.title || !newTask.phaseId ? 0.5 : 1, whiteSpace: "nowrap" }}>
-                                    {createTask.isPending ? "Adding..." : "Add"}
+                                <div>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Priority</label>
+                                    <select value={newTask.priority} onChange={(e) => setNewTask(p => ({ ...p, priority: e.target.value }))} style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", cursor: "pointer", fontFamily: "inherit" }}>
+                                        <option value="low">Low</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="high">High</option>
+                                        <option value="urgent">Urgent</option>
+                                    </select>
+                                </div>
+                                <div style={{ gridColumn: "span 2" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Task Title *</label>
+                                    <input type="text" value={newTask.title} onChange={(e) => setNewTask(p => ({ ...p, title: e.target.value }))} placeholder="Draft floor plan sheet" style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                </div>
+                                <div style={{ gridColumn: "span 2" }}>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Description</label>
+                                    <input type="text" value={newTask.description} onChange={(e) => setNewTask(p => ({ ...p, description: e.target.value }))} placeholder="Optional working note" style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+                                </div>
+                                <div>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Due Date</label>
+                                    <input type="date" value={newTask.dueDate} min={selectedTaskPhase ? asInputDate(selectedTaskPhase.startDate) : undefined} max={selectedTaskPhase ? asInputDate(selectedTaskPhase.endDate) : undefined} onChange={(e) => setNewTask(p => ({ ...p, dueDate: e.target.value }))} style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                </div>
+                                <div>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estimated Hours</label>
+                                    <input type="number" min="0" step="0.5" value={newTask.estimatedHours} onChange={(e) => setNewTask(p => ({ ...p, estimatedHours: e.target.value }))} placeholder="0" style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                </div>
+                                <div>
+                                    <label style={{ display: "block", fontSize: "10px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Actual Hours</label>
+                                    <input type="number" min="0" step="0.5" value={newTask.actualHours} onChange={(e) => setNewTask(p => ({ ...p, actualHours: e.target.value }))} placeholder="0" style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", fontSize: "12px", color: "var(--text-primary)", fontFamily: "inherit" }} />
+                                </div>
+                                <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "var(--bg-warm)", fontSize: "12px", color: "var(--text-secondary)", cursor: "pointer" }}>
+                                    <input type="checkbox" checked={newTask.billable} onChange={(e) => setNewTask(p => ({ ...p, billable: e.target.checked }))} />
+                                    Billable task
+                                </label>
+                                <button onClick={() => {
+                                    if (!newTask.title || !newTask.phaseId || !newTask.deliverableId) return;
+                                    createTask.mutate({
+                                        projectId,
+                                        phaseId: newTask.phaseId,
+                                        deliverableId: newTask.deliverableId,
+                                        title: newTask.title,
+                                        description: newTask.description,
+                                        priority: newTask.priority as "low" | "medium" | "high" | "urgent",
+                                        assigneeId: newTask.assigneeId || undefined,
+                                        dueDate: newTask.dueDate,
+                                        estimatedHours: Number(newTask.estimatedHours || 0),
+                                        actualHours: Number(newTask.actualHours || 0),
+                                        billable: newTask.billable,
+                                    });
+                                }}
+                                    disabled={!newTask.title || !newTask.phaseId || !newTask.deliverableId || createTask.isPending}
+                                    style={{ padding: "10px 16px", borderRadius: "8px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "11px", fontWeight: 600, cursor: "pointer", opacity: !newTask.title || !newTask.phaseId || !newTask.deliverableId ? 0.5 : 1, whiteSpace: "nowrap" }}>
+                                    {createTask.isPending ? "Adding..." : "Create Task"}
                                 </button>
                             </div>
+                            {newTask.phaseId && selectableTaskDeliverables.length === 0 && (
+                                <p style={{ fontSize: "11px", color: "var(--warning)", marginTop: "12px" }}>Create a milestone and deliverable in the Deliverables tab before adding tasks to this phase.</p>
+                            )}
                         </div>
                     )}
 
-                    {/* Task list */}
-                    {(tasks as any[]).length === 0 ? (
-                        <div style={{ padding: "40px", textAlign: "center" }}>
+                    {taskRows.length === 0 ? (
+                        <div style={{ padding: "44px", textAlign: "center", borderRadius: "14px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                             <ListTodo size={24} style={{ color: "var(--text-muted)", marginBottom: "8px" }} />
-                            <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No tasks yet. Add your first task above.</p>
+                            <p style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 300 }}>No tasks yet. Start from a deliverable so progress has somewhere to roll up.</p>
                         </div>
                     ) : (
-                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                            <thead>
-                                <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
-                                    {["Status", "Task", "Phase", "Assignee", "Due Date", ""].map(h => (
-                                        <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(tasks as any[]).map((task: any) => {
-                                    const tsc = taskStatusConfig[task.status] || taskStatusConfig["todo"];
-                                    return (
-                                        <tr key={task.id} style={{ borderBottom: "1px solid var(--border-primary)" }}
-                                            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-warm)"; }}
-                                            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
-                                            <td style={{ padding: "10px 14px" }}>
-                                                <button onClick={() => { const idx = taskStatusCycle.indexOf(task.status); const next = taskStatusCycle[(idx + 1) % taskStatusCycle.length]; updateTask.mutate({ id: task.id, status: next }); }}
-                                                    style={{ border: "none", cursor: "pointer", color: tsc.color, display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", background: tsc.bg }}>
-                                                    {tsc.icon} {tsc.label}
-                                                </button>
-                                            </td>
-                                            <td style={{ padding: "10px 14px", fontSize: "12px", fontWeight: 500, color: task.status === "done" ? "var(--text-muted)" : "var(--text-primary)", textDecoration: task.status === "done" ? "line-through" : "none" }}>{task.title}</td>
-                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{task.phase?.name || "-"}</td>
-                                            <td style={{ padding: "10px 14px" }}>
-                                                {task.assignee ? (
-                                                    <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "10px", background: "rgba(176,122,74,0.08)", color: "var(--accent-primary)", fontWeight: 500 }}>{task.assignee.name}</span>
-                                                ) : (
-                                                    <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>Unassigned</span>
-                                                )}
-                                            </td>
-                                            <td style={{ padding: "10px 14px", fontSize: "11px", color: "var(--text-muted)" }}>{task.dueDate || "-"}</td>
-                                            <td style={{ padding: "10px 14px" }}>
-                                                <button onClick={() => deleteTask.mutate({ id: task.id })}
-                                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}
-                                                    onMouseEnter={(e) => { e.currentTarget.style.color = "var(--danger)"; }}
-                                                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}>
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                            {phaseDeliveryBoards.map((phase) => {
+                                const phaseTasks = taskRows.filter((task) => task.phaseId === phase.id);
+                                if (phaseTasks.length === 0) return null;
+                                return (
+                                    <div key={phase.id} style={{ borderRadius: "14px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", padding: "16px 18px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-warm)" }}>
+                                            <div>
+                                                <h3 style={{ fontSize: "14px", color: "var(--text-primary)", fontWeight: 600 }}>{phase.name}</h3>
+                                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "3px" }}>{formatDateRange(phase.startDate, phase.endDate)} | {phaseTasks.length} task{phaseTasks.length !== 1 ? "s" : ""}</p>
+                                            </div>
+                                            <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--accent-primary)", background: "rgba(176,122,74,0.1)", borderRadius: "999px", padding: "5px 9px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{phase.progress}% phase progress</span>
+                                        </div>
+
+                                        <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: "12px" }}>
+                                            {[...phase.milestoneBoards.flatMap((milestone) => milestone.deliverables), ...phase.unlinkedDeliverables].filter((deliverable) => phaseTasks.some((task) => task.deliverableId === deliverable.id)).map((deliverable) => {
+                                                const deliverableTasks = phaseTasks.filter((task) => task.deliverableId === deliverable.id);
+                                                const deliverableProgress = deliverableProgressValue({ ...deliverable, tasks: deliverableTasks });
+                                                return (
+                                                    <div key={deliverable.id} style={{ padding: "14px", borderRadius: "12px", border: "1px solid var(--border-primary)", background: "linear-gradient(135deg, var(--bg-secondary), var(--bg-card))" }}>
+                                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "10px", flexWrap: "wrap" }}>
+                                                            <div>
+                                                                <p style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>{deliverable.title}</p>
+                                                                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "3px" }}>{deliverable.milestone?.name ? `Milestone: ${deliverable.milestone.name}` : "Ungrouped deliverable"}</p>
+                                                            </div>
+                                                            <div style={{ minWidth: "180px" }}>
+                                                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                                                    <span>Deliverable progress</span>
+                                                                    <span>{deliverableProgress}%</span>
+                                                                </div>
+                                                                <div style={{ height: "7px", borderRadius: "999px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                                                                    <div style={{ width: `${deliverableProgress}%`, height: "100%", borderRadius: "999px", background: deliverableProgress >= 100 ? "var(--success)" : "var(--accent-primary)", transition: "width 0.25s" }} />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                                            {deliverableTasks.map((task) => {
+                                                                const tsc = taskStatusConfig[task.status] || taskStatusConfig.todo;
+                                                                const priorityColor = task.priority === "urgent" ? "var(--danger)" : task.priority === "high" ? "var(--warning)" : task.priority === "low" ? "var(--text-muted)" : "var(--accent-primary)";
+                                                                return (
+                                                                    <div key={task.id} style={{ display: "grid", gridTemplateColumns: "auto minmax(180px, 1fr) repeat(4, minmax(90px, auto)) auto", gap: "10px", alignItems: "center", padding: "10px 12px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)" }}>
+                                                                        <button onClick={() => { const idx = taskStatusCycle.indexOf(task.status); const next = taskStatusCycle[(idx + 1) % taskStatusCycle.length]; updateTask.mutate({ id: task.id, status: next }); }}
+                                                                            style={{ border: "none", cursor: "pointer", color: tsc.color, display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", fontWeight: 700, padding: "5px 8px", borderRadius: "999px", background: tsc.bg, whiteSpace: "nowrap" }}>
+                                                                            {tsc.icon} {tsc.label}
+                                                                        </button>
+                                                                        <div>
+                                                                            <p style={{ fontSize: "12px", fontWeight: 600, color: task.status === "done" ? "var(--text-muted)" : "var(--text-primary)", textDecoration: task.status === "done" ? "line-through" : "none" }}>{task.title}</p>
+                                                                            {task.description && <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "3px" }}>{task.description}</p>}
+                                                                        </div>
+                                                                        <span style={{ fontSize: "10px", color: priorityColor, background: `${priorityColor}12`, padding: "4px 8px", borderRadius: "999px", textTransform: "uppercase", fontWeight: 700 }}>{task.priority || "medium"}</span>
+                                                                        <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{task.assignee?.name || "Unassigned"}</span>
+                                                                        <span style={{ fontSize: "11px", color: task.dueDate && task.dueDate < todayIso && task.status !== "done" ? "var(--danger)" : "var(--text-muted)" }}>{task.dueDate || "No date"}</span>
+                                                                        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{Number(task.actualHours || 0)}h / {Number(task.estimatedHours || 0)}h {task.billable ? "billable" : "non-billable"}</span>
+                                                                        <button onClick={() => deleteTask.mutate({ id: task.id })}
+                                                                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}
+                                                                            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--danger)"; }}
+                                                                            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}>
+                                                                            <Trash2 size={13} />
+                                                                        </button>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {taskRows.some((task) => !task.deliverableId) && (
+                                <div style={{ padding: "16px", borderRadius: "14px", border: "1px dashed var(--border-secondary)", background: "var(--bg-card)", boxShadow: "var(--shadow-sm)" }}>
+                                    <h3 style={{ fontSize: "13px", color: "var(--text-primary)", fontWeight: 600, marginBottom: "6px" }}>Legacy unlinked tasks</h3>
+                                    <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "10px" }}>These were created before tasks were tied to deliverables. New tasks must be created under a deliverable.</p>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                        {taskRows.filter((task) => !task.deliverableId).map((task) => (
+                                            <div key={task.id} style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", padding: "9px 10px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                                <span style={{ fontSize: "12px", color: "var(--text-primary)" }}>{task.title}</span>
+                                                <button onClick={() => deleteTask.mutate({ id: task.id })} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "4px" }}><Trash2 size={13} /></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
             )}
@@ -1129,7 +1338,7 @@ export default function ProjectDetailPage() {
                         ].map((card) => {
                             const Icon = card.icon;
                             return (
-                                <div key={card.label} style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                                <div key={card.label} style={{ padding: "18px", borderRadius: "12px", background: "linear-gradient(135deg, var(--bg-card), var(--bg-warm))", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px" }}>
                                         <div>
                                             <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>{card.label}</p>
@@ -1146,7 +1355,7 @@ export default function ProjectDetailPage() {
                     </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "16px", alignItems: "start" }}>
-                        <div style={{ padding: "24px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                        <div style={{ padding: "24px", borderRadius: "14px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                             <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", marginBottom: "20px", flexWrap: "wrap" }}>
                                 <div>
                                     <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Budget Control</h3>
@@ -1177,7 +1386,7 @@ export default function ProjectDetailPage() {
                                 const isSaving = savingBudgetPhaseId === phase.id;
 
                                 return (
-                                    <div key={phase.id} style={{ padding: "18px", borderRadius: "10px", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", marginBottom: "14px" }}>
+                                    <div key={phase.id} style={{ padding: "18px", borderRadius: "12px", border: "1px solid var(--border-primary)", borderLeft: `3px solid ${burnColor}`, background: "linear-gradient(135deg, var(--bg-secondary), var(--bg-warm))", marginBottom: "14px", boxShadow: "var(--shadow-sm)" }}>
                                         <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", flexWrap: "wrap", marginBottom: "14px" }}>
                                             <div>
                                                 <p style={{ fontSize: "14px", color: "var(--text-primary)", fontWeight: 500 }}>{phase.name}</p>
@@ -1227,7 +1436,7 @@ export default function ProjectDetailPage() {
                                             </div>
                                         </div>
 
-                                        <div style={{ height: "7px", borderRadius: "999px", background: "var(--bg-tertiary)", overflow: "hidden", marginBottom: "14px" }}>
+                                        <div style={{ height: "9px", borderRadius: "999px", background: "var(--bg-tertiary)", overflow: "hidden", marginBottom: "14px", border: "1px solid var(--border-primary)" }}>
                                             <div style={{ height: "100%", width: `${Math.min(phase.burnPct, 100)}%`, background: burnColor, transition: "width 0.3s" }} />
                                         </div>
 
@@ -1348,7 +1557,7 @@ export default function ProjectDetailPage() {
             {/* Deliverables tab */}
             {activeTab === "deliverables" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                    <div style={{ padding: "20px 22px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                    <div style={{ padding: "22px 24px", borderRadius: "14px", background: "linear-gradient(135deg, var(--bg-card), var(--bg-warm))", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", flexWrap: "wrap" }}>
                             <div>
                                 <h3 style={{ fontSize: "15px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Deliverables & Milestones</h3>
@@ -1363,7 +1572,7 @@ export default function ProjectDetailPage() {
                                     { label: "Completion", value: `${milestoneCompletionPct}%` },
                                     { label: "Ungrouped", value: deliverablesWithoutMilestone },
                                 ].map((item) => (
-                                    <div key={item.label} style={{ padding: "12px 14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                    <div key={item.label} style={{ padding: "12px 14px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)" }}>
                                         <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>{item.label}</p>
                                         <p style={{ fontSize: "18px", fontWeight: 500, color: "var(--text-primary)" }}>{item.value}</p>
                                     </div>
@@ -1375,7 +1584,7 @@ export default function ProjectDetailPage() {
                     {phaseDeliveryBoards.map((phase) => {
                         const availableMembers = phase.assignments.map((assignment) => assignment.user);
                         return (
-                            <div key={phase.id} style={{ padding: "22px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                            <div key={phase.id} style={{ padding: "22px", borderRadius: "14px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", marginBottom: "18px", flexWrap: "wrap" }}>
                                     <div>
                                         <h3 style={{ fontSize: "16px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{phase.name}</h3>
@@ -1400,7 +1609,7 @@ export default function ProjectDetailPage() {
                                     </div>
                                 </div>
 
-                                <div style={{ padding: "14px", borderRadius: "8px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: "16px" }}>
+                                <div style={{ padding: "14px", borderRadius: "10px", background: "linear-gradient(135deg, var(--bg-secondary), var(--bg-warm))", border: "1px solid var(--border-primary)", marginBottom: "16px" }}>
                                     <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.2fr 0.9fr auto", gap: "10px", alignItems: "end" }}>
                                         <div>
                                             <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px", textTransform: "uppercase" }}>Milestone</label>
@@ -1453,7 +1662,7 @@ export default function ProjectDetailPage() {
                                         {phase.milestoneBoards.map((milestone) => {
                                             const statusCycle = ["pending", "in-progress", "completed", "approved"] as const;
                                             return (
-                                                <div key={milestone.id} style={{ padding: "16px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)" }}>
+                                                <div key={milestone.id} style={{ padding: "16px", borderRadius: "12px", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", boxShadow: "var(--shadow-sm)" }}>
                                                     <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", marginBottom: "14px", flexWrap: "wrap" }}>
                                                         <div>
                                                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1493,7 +1702,7 @@ export default function ProjectDetailPage() {
                                                                 };
                                                                 const ds = statusConfig[deliverable.status] || statusConfig.pending;
                                                                 return (
-                                                                    <div key={deliverable.id} style={{ display: "grid", gridTemplateColumns: "auto 1.4fr 1fr auto auto", gap: "10px", alignItems: "center", padding: "10px 12px", borderRadius: "6px", background: "var(--bg-card)", border: "1px solid var(--border-primary)" }}>
+                                                                    <div key={deliverable.id} style={{ display: "grid", gridTemplateColumns: "auto 1.4fr 1fr auto auto", gap: "10px", alignItems: "center", padding: "12px 14px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)" }}>
                                                                         <button
                                                                             onClick={() => {
                                                                                 const idx = statusCycle.indexOf(deliverable.status);
@@ -1672,6 +1881,90 @@ export default function ProjectDetailPage() {
                 </div>
             )}
 
+            {/* Invoice builder modal */}
+            {showInvoiceBuilder && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }} onClick={() => setShowInvoiceBuilder(false)}>
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.34)", backdropFilter: "blur(4px)" }} />
+                    <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: "980px", maxHeight: "88vh", overflow: "hidden", background: "var(--bg-card)", borderRadius: "12px", border: "1px solid var(--border-secondary)", boxShadow: "0 22px 70px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column" }}>
+                        <div style={{ padding: "22px 24px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px" }}>
+                            <div>
+                                <h2 style={{ fontSize: "19px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Project Invoice</h2>
+                                <p style={{ marginTop: "4px", fontSize: "12px", color: "var(--text-muted)" }}>Draft from unbilled time entries and billable expenses. Selected source items are locked after invoice creation so they do not get billed twice.</p>
+                            </div>
+                            <button onClick={() => setShowInvoiceBuilder(false)} style={{ width: "32px", height: "32px", borderRadius: "6px", border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <X size={15} />
+                            </button>
+                        </div>
+                        <div style={{ padding: "18px 24px", display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: "12px", borderBottom: "1px solid var(--border-primary)" }}>
+                            <div>
+                                <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "5px" }}>Invoice Date</label>
+                                <input type="date" value={invoiceMetaDraft.date} onChange={(e) => setInvoiceMetaDraft((prev) => ({ ...prev, date: e.target.value }))} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", color: "var(--text-primary)", fontSize: "12px", fontFamily: "inherit" }} />
+                            </div>
+                            <div>
+                                <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "5px" }}>Due Date</label>
+                                <input type="date" value={invoiceMetaDraft.dueDate} onChange={(e) => setInvoiceMetaDraft((prev) => ({ ...prev, dueDate: e.target.value }))} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", color: "var(--text-primary)", fontSize: "12px", fontFamily: "inherit" }} />
+                            </div>
+                            <div>
+                                <label style={{ display: "block", fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "5px" }}>Notes</label>
+                                <input value={invoiceMetaDraft.notes} onChange={(e) => setInvoiceMetaDraft((prev) => ({ ...prev, notes: e.target.value }))} style={{ width: "100%", padding: "9px 10px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-card)", color: "var(--text-primary)", fontSize: "12px", fontFamily: "inherit" }} />
+                            </div>
+                        </div>
+                        <div style={{ flex: 1, overflow: "auto", padding: "0 24px 18px" }}>
+                            {invoicePreviewLoading ? (
+                                <div style={{ padding: "48px", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>Loading billable items...</div>
+                            ) : invoiceDraftLines.length === 0 ? (
+                                <div style={{ padding: "48px", textAlign: "center" }}>
+                                    <FileText size={24} style={{ color: "var(--text-muted)", opacity: 0.4, marginBottom: "8px" }} />
+                                    <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>No unbilled work or billable expenses found for this project.</p>
+                                </div>
+                            ) : (
+                                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                                            {["Bill", "Description", "Qty", "Rate", "Amount", "Source"].map((heading) => (
+                                                <th key={heading} style={{ padding: "10px 8px", textAlign: heading === "Description" ? "left" : "right", fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>{heading}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {invoiceDraftLines.map((line, index) => (
+                                            <tr key={line.id || index} style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                                                <td style={{ padding: "10px 8px", textAlign: "center" }}>
+                                                    <input type="checkbox" checked={!!line.included} onChange={(e) => updateInvoiceLine(index, "included", e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
+                                                </td>
+                                                <td style={{ padding: "10px 8px", minWidth: "280px" }}>
+                                                    <input value={line.description} onChange={(e) => updateInvoiceLine(index, "description", e.target.value)} style={{ width: "100%", padding: "8px 9px", borderRadius: "6px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", color: "var(--text-primary)", fontSize: "12px", fontFamily: "inherit" }} />
+                                                </td>
+                                                <td style={{ padding: "10px 8px", width: "96px" }}>
+                                                    <input type="number" min="0" step="0.25" value={line.qty} onChange={(e) => updateInvoiceLine(index, "qty", e.target.value)} style={{ width: "100%", padding: "8px 9px", borderRadius: "6px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", color: "var(--text-primary)", fontSize: "12px", fontFamily: "inherit", textAlign: "right" }} />
+                                                </td>
+                                                <td style={{ padding: "10px 8px", width: "112px" }}>
+                                                    <input type="number" min="0" step="1" value={line.rate} onChange={(e) => updateInvoiceLine(index, "rate", e.target.value)} style={{ width: "100%", padding: "8px 9px", borderRadius: "6px", border: "1px solid var(--border-primary)", background: "var(--bg-card)", color: "var(--text-primary)", fontSize: "12px", fontFamily: "inherit", textAlign: "right" }} />
+                                                </td>
+                                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: "12px", fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap" }}>{formatCurrency(Number(line.qty || 0) * Number(line.rate || 0))}</td>
+                                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", whiteSpace: "nowrap" }}>{line.sourceType === "time_entry" ? "Time" : "Expense"}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+                        <div style={{ padding: "16px 24px", borderTop: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
+                            <div>
+                                <p style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Draft Total</p>
+                                <p style={{ marginTop: "2px", fontSize: "22px", color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{formatCurrency(invoiceDraftTotal)}</p>
+                            </div>
+                            <div style={{ display: "flex", gap: "10px" }}>
+                                <button onClick={() => setShowInvoiceBuilder(false)} style={{ padding: "10px 18px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>Cancel</button>
+                                <button onClick={createProjectInvoice} disabled={includedInvoiceLines.length === 0 || createProjectInvoiceMut.isPending} style={{ padding: "10px 20px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "13px", fontWeight: 500, cursor: "pointer", opacity: includedInvoiceLines.length === 0 || createProjectInvoiceMut.isPending ? 0.55 : 1 }}>
+                                    {createProjectInvoiceMut.isPending ? "Creating..." : "Create Draft Invoice"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Add Phase modal */}
             {showAddPhase && (
                 <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowAddPhase(false)}>
@@ -1734,5 +2027,6 @@ export default function ProjectDetailPage() {
         </div>
     );
 }
+
 
 
