@@ -50,6 +50,7 @@ model Organization {
   consultants        Consultant[]
   consultantBills    ConsultantBill[]
   payments           Payment[]
+  teamInvites        TeamInvite[]
 }
 
 // ─── Time Off Policy ───
@@ -87,6 +88,33 @@ model DefaultRole {
   org   Organization @relation(fields: [orgId], references: [id])
 }
 
+model TeamInvite {
+  id         String   @id @default(cuid())
+  email      String
+  name       String
+  phone      String   @default("")
+  role       String   @default("member")
+  title      String   @default("")
+  costRate   Float    @default(0)
+  billRate   Float    @default(0)
+  targetUtil Float    @default(75)
+  tokenHash  String   @unique
+  status     String   @default("pending") // pending | accepted | expired | revoked
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime @default(now())
+  lastSentAt DateTime @default(now())
+
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  invitedById String
+  invitedBy   User @relation(fields: [invitedById], references: [id])
+
+  @@index([orgId])
+  @@index([email])
+}
+
 // ─── User ───
 
 model User {
@@ -111,6 +139,7 @@ model User {
   allocations            Allocation[]
   phaseAssignments       PhaseAssignment[]
   tasks                  Task[]
+  sentTeamInvites        TeamInvite[]
   timeOffRequests        TimeOffRequest[]
   timesheetSubmissions   TimesheetSubmission[]
   deliverables           Deliverable[]

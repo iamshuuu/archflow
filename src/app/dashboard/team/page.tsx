@@ -1,258 +1,423 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { trpc } from "@/app/providers";
-import {
-    Plus,
-    Search,
-    Mail,
-    Phone,
-    MoreHorizontal,
-    Users,
-    Clock,
-    TrendingUp,
-    BarChart3,
-    X,
-} from "lucide-react";
+import { AlertTriangle, BarChart3, Briefcase, CheckCircle, Clock, Edit3, Mail, Phone, Plus, Search, Target, TrendingUp, Users, X } from "lucide-react";
+import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
-/* ─── Types ─── */
+type TeamView = "directory" | "capacity" | "coverage";
 
-interface TeamMember {
-    id: string;
+type MemberForm = {
+    id?: string;
     name: string;
-    initials: string;
     email: string;
     phone: string;
     role: string;
     title: string;
-    costRate: number;
-    billRate: number;
-    targetUtil: number;
-    weeklyHours: number[];
-    billableHours: number;
-    nonBillableHours: number;
-    ptoHours: number;
-    totalHours: number;
-    projects: string[];
-}
+    costRate: string;
+    billRate: string;
+    targetUtil: string;
+};
 
-/* ─── Data ─── */
+const emptyForm: MemberForm = {
+    name: "",
+    email: "",
+    phone: "",
+    role: "member",
+    title: "",
+    costRate: "45",
+    billRate: "125",
+    targetUtil: "75",
+};
 
-const weekLabels = ["W1", "W2", "W3", "W4", "W5", "W6"];
-const roles = ["Admin", "Manager", "Member"];
+const roles = [
+    { value: "owner", label: "Owner" },
+    { value: "admin", label: "Admin" },
+    { value: "manager", label: "Manager" },
+    { value: "member", label: "Member" },
+];
 const titles = ["Principal", "Project Architect", "Design Lead", "Technical Lead", "Project Manager", "Design Architect", "Junior Architect", "Intern"];
 
-/* ─── Styles ─── */
-
-const labelStyle: React.CSSProperties = { fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px", display: "block" };
-const fieldStyle: React.CSSProperties = { width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "var(--bg-warm)", fontSize: "13px", color: "var(--text-primary)", fontFamily: "inherit", outline: "none", transition: "border-color 0.2s" };
-
-/* ════════════════════════════════════════════════════
-   Component
-   ════════════════════════════════════════════════════ */
+const initials = (name: string) => name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
+const todayIso = new Date().toISOString().slice(0, 10);
+const weekAgoIso = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
 
 export default function TeamPage() {
-    const { data: rawMembers = [], isLoading } = trpc.team.list.useQuery();
+    const { formatCurrency } = useCurrencyFormatter();
     const utils = trpc.useUtils();
-    const createMutation = trpc.team.create.useMutation({ onSuccess: () => utils.team.list.invalidate() });
-
-    // Adapt DB users to UI shape
-    const members: TeamMember[] = rawMembers.map((m: any) => {
-        const entries = m.timeEntries || [];
-        const billableHours = entries.filter((e: any) => e.billable !== false).reduce((s: number, e: any) => s + e.hours, 0);
-        const nonBillableHours = entries.filter((e: any) => e.billable === false).reduce((s: number, e: any) => s + e.hours, 0);
-        const ptoHours = entries.filter((e: any) => e.entryType === "pto").reduce((s: number, e: any) => s + e.hours, 0);
-        const totalHours = entries.reduce((s: number, e: any) => s + e.hours, 0);
-        return {
-            id: m.id,
-            name: m.name,
-            initials: m.name.split(" ").map((p: string) => p[0]).join("").toUpperCase().slice(0, 2),
-            email: m.email,
-            phone: m.phone || "",
-            role: m.role || "Member",
-            title: m.title || "",
-            costRate: m.costRate ?? 0,
-            billRate: m.billRate ?? 0,
-            targetUtil: m.targetUtil ?? 85,
-            weeklyHours: [0, 0, 0, 0, 0, 0],
-            billableHours,
-            nonBillableHours,
-            ptoHours,
-            totalHours,
-            projects: [],
-        };
-    });
+    const { data: rawMembers = [], isLoading } = trpc.team.list.useQuery();
+    const { data: inviteContext } = trpc.team.inviteContext.useQuery();
+    const canInvite = !!inviteContext?.canInvite;
+    const { data: pendingInvites = [] } = trpc.team.pendingInvites.useQuery(undefined, { enabled: canInvite });
+    const inviteMember = trpc.team.invite.useMutation({ onSuccess: (result) => { utils.team.pendingInvites.invalidate(); setLastInviteLink(result.inviteUrl || ""); } });
+    const resendInvite = trpc.team.resendInvite.useMutation({ onSuccess: (result) => { utils.team.pendingInvites.invalidate(); setLastInviteLink(result.inviteUrl || ""); } });
+    const revokeInvite = trpc.team.revokeInvite.useMutation({ onSuccess: () => utils.team.pendingInvites.invalidate() });
+    const updateMember = trpc.team.update.useMutation({ onSuccess: () => utils.team.list.invalidate() });
 
     const [search, setSearch] = useState("");
-    const [view, setView] = useState<"directory" | "utilization">("directory");
-    const [showAdd, setShowAdd] = useState(false);
+    const [view, setView] = useState<TeamView>("directory");
+    const [showForm, setShowForm] = useState(false);
+    const [form, setForm] = useState<MemberForm>(emptyForm);
+    const [lastInviteLink, setLastInviteLink] = useState("");
 
-    // Add member form
-    const [formName, setFormName] = useState("");
-    const [formEmail, setFormEmail] = useState("");
-    const [formPhone, setFormPhone] = useState("");
-    const [formRole, setFormRole] = useState("Member");
-    const [formTitle, setFormTitle] = useState("");
-    const [formCostRate, setFormCostRate] = useState<number>(45);
-    const [formBillRate, setFormBillRate] = useState<number>(125);
-    const [formTargetUtil, setFormTargetUtil] = useState<number>(85);
-
-    const filtered = members.filter((m) =>
-        !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.title.toLowerCase().includes(search.toLowerCase())
-    );
-
-    const avgUtil = Math.round(members.reduce((s, m) => {
-        const avg = m.weeklyHours.reduce((a, b) => a + b, 0) / m.weeklyHours.length;
-        return s + (avg / 40) * 100;
-    }, 0) / members.length);
-
-    const getUtilColor = (pct: number) => {
-        if (pct >= 100) return "var(--danger)";
-        if (pct >= 85) return "var(--success)";
-        if (pct >= 70) return "var(--accent-primary)";
-        return "var(--warning)";
-    };
-
-    /* ─── Actions ─── */
-
-    const resetForm = () => {
-        setFormName(""); setFormEmail(""); setFormPhone(""); setFormRole("Member"); setFormTitle(""); setFormCostRate(45); setFormBillRate(125); setFormTargetUtil(85);
-    };
-
-    const getInitials = (name: string) => {
-        const parts = name.trim().split(" ");
-        if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-        return name.slice(0, 2).toUpperCase();
-    };
-
-    const handleAdd = () => {
-        if (!formName.trim() || !formEmail.trim() || !formTitle) return;
-        createMutation.mutate({
-            name: formName.trim(),
-            email: formEmail.trim(),
-            phone: formPhone.trim(),
-            role: formRole,
-            title: formTitle,
-            costRate: formCostRate,
-            billRate: formBillRate,
-            targetUtil: formTargetUtil,
+    const members = useMemo(() => (rawMembers as any[]).map((member) => {
+        const entries = member.timeEntries || [];
+        const assignments = member.phaseAssignments || [];
+        const assignedTasks = member.tasks || [];
+        const assignedDeliverables = member.deliverables || [];
+        const billableHours = entries.filter((entry: any) => entry.billable).reduce((sum: number, entry: any) => sum + entry.hours, 0);
+        const approvedBillableHours = entries.filter((entry: any) => entry.billable && entry.status === "approved").reduce((sum: number, entry: any) => sum + entry.hours, 0);
+        const totalHours = entries.reduce((sum: number, entry: any) => sum + entry.hours, 0);
+        const weekHours = entries.filter((entry: any) => entry.date >= weekAgoIso).reduce((sum: number, entry: any) => sum + entry.hours, 0);
+        const plannedHours = assignments.reduce((sum: number, assignment: any) => sum + (assignment.plannedHours || 0), 0);
+        const remainingHours = Math.max(0, plannedHours - totalHours);
+        const utilization = Math.round((billableHours / 40) * 100);
+        const plannedUtilization = Math.round((plannedHours / 40) * 100);
+        const laborCost = entries.reduce((sum: number, entry: any) => sum + entry.hours * (member.costRate || 0), 0);
+        const billableValue = entries.filter((entry: any) => entry.billable).reduce((sum: number, entry: any) => sum + entry.hours * (member.billRate || 0), 0);
+        const estimatedRevenue = assignments.reduce((sum: number, assignment: any) => sum + (assignment.plannedHours || 0) * (assignment.billRate || member.billRate || 0), 0);
+        const activeProjects = new Map<string, string>();
+        assignments.forEach((assignment: any) => {
+            const project = assignment.phase?.project;
+            if (project && project.status !== "archived") activeProjects.set(project.id, project.name);
         });
-        setShowAdd(false);
+        entries.forEach((entry: any) => {
+            if (entry.project) activeProjects.set(entry.project.id, entry.project.name);
+        });
+        const openTasks = assignedTasks.filter((task: any) => task.status !== "done");
+        const urgentTasks = openTasks.filter((task: any) => task.priority === "urgent" || task.dueDate < todayIso);
+        const openDeliverables = assignedDeliverables.filter((deliverable: any) => !["completed", "approved"].includes(deliverable.status));
+        const missingRecentTime = assignments.length > 0 && weekHours === 0;
+        const risk = plannedUtilization > 110 || urgentTasks.length > 0 ? "high" : plannedUtilization > 90 || missingRecentTime ? "medium" : "low";
+
+        return {
+            id: member.id,
+            name: member.name,
+            email: member.email,
+            phone: member.phone || "",
+            role: member.role || "member",
+            title: member.title || "Team member",
+            costRate: member.costRate || 0,
+            billRate: member.billRate || 0,
+            targetUtil: member.targetUtil || 75,
+            initials: initials(member.name),
+            assignments,
+            entries,
+            billableHours,
+            approvedBillableHours,
+            totalHours,
+            weekHours,
+            plannedHours,
+            remainingHours,
+            utilization,
+            plannedUtilization,
+            laborCost,
+            billableValue,
+            estimatedRevenue,
+            margin: billableValue - laborCost,
+            activeProjects: Array.from(activeProjects.values()),
+            openTasks,
+            urgentTasks,
+            openDeliverables,
+            missingRecentTime,
+            risk,
+        };
+    }), [rawMembers]);
+
+    const filtered = members.filter((member) => {
+        const q = search.toLowerCase();
+        return !q || member.name.toLowerCase().includes(q) || member.title.toLowerCase().includes(q) || member.role.toLowerCase().includes(q) || member.activeProjects.some((project) => project.toLowerCase().includes(q));
+    });
+
+    const phaseCoverage = useMemo(() => {
+        const phases = new Map<string, any>();
+        members.forEach((member) => {
+            member.assignments.forEach((assignment: any) => {
+                const phase = assignment.phase;
+                if (!phase?.project) return;
+                const key = phase.id;
+                const existing = phases.get(key) || {
+                    id: phase.id,
+                    phaseName: phase.name,
+                    projectName: phase.project.name,
+                    projectStatus: phase.project.status,
+                    budgetHours: phase.budgetHours || 0,
+                    plannedHours: 0,
+                    assigned: [],
+                    openTasks: 0,
+                    openDeliverables: 0,
+                };
+                existing.plannedHours += assignment.plannedHours || 0;
+                existing.assigned.push({ name: member.name, role: assignment.roleLabel || member.title, hours: assignment.plannedHours || 0 });
+                existing.openTasks += (phase.tasks || []).filter((task: any) => task.assigneeId === member.id && task.status !== "done").length;
+                existing.openDeliverables += (phase.deliverables || []).filter((deliverable: any) => deliverable.assigneeId === member.id && !["completed", "approved"].includes(deliverable.status)).length;
+                phases.set(key, existing);
+            });
+        });
+        return Array.from(phases.values()).sort((a, b) => a.projectName.localeCompare(b.projectName));
+    }, [members]);
+
+    const totals = {
+        teamSize: members.length,
+        plannedHours: members.reduce((sum, member) => sum + member.plannedHours, 0),
+        weekHours: members.reduce((sum, member) => sum + member.weekHours, 0),
+        billableValue: members.reduce((sum, member) => sum + member.billableValue, 0),
+        laborCost: members.reduce((sum, member) => sum + member.laborCost, 0),
+        highRisk: members.filter((member) => member.risk === "high").length,
+        missingTime: members.filter((member) => member.missingRecentTime).length,
+        unstaffedPhases: phaseCoverage.filter((phase) => phase.assigned.length === 0).length,
+    };
+    const avgUtilization = members.length > 0 ? Math.round(members.reduce((sum, member) => sum + member.utilization, 0) / members.length) : 0;
+    const avgBillRate = members.length > 0 ? Math.round(members.reduce((sum, member) => sum + member.billRate, 0) / members.length) : 0;
+
+    const riskColor = (risk: string) => risk === "high" ? "var(--danger)" : risk === "medium" ? "var(--warning)" : "var(--success)";
+    const utilColor = (pct: number) => pct > 110 ? "var(--danger)" : pct >= 75 ? "var(--success)" : pct >= 50 ? "var(--accent-primary)" : "var(--warning)";
+
+    const resetForm = () => setForm(emptyForm);
+    const openCreate = () => { resetForm(); setShowForm(true); };
+    const openEdit = (member: any) => {
+        setForm({
+            id: member.id,
+            name: member.name,
+            email: member.email,
+            phone: member.phone,
+            role: member.role,
+            title: member.title,
+            costRate: String(member.costRate),
+            billRate: String(member.billRate),
+            targetUtil: String(member.targetUtil),
+        });
+        setShowForm(true);
+    };
+    const saveMember = () => {
+        if (!form.name.trim() || !form.email.trim() || !form.title.trim()) return;
+        const payload = {
+            name: form.name.trim(),
+            email: form.email.trim(),
+            phone: form.phone.trim(),
+            role: form.role as "owner" | "admin" | "manager" | "member",
+            title: form.title.trim(),
+            costRate: Number(form.costRate || 0),
+            billRate: Number(form.billRate || 0),
+            targetUtil: Number(form.targetUtil || 0),
+        };
+        if (form.id) {
+            updateMember.mutate({ id: form.id, name: payload.name, role: payload.role, title: payload.title, costRate: payload.costRate, billRate: payload.billRate, targetUtil: payload.targetUtil });
+        } else {
+            inviteMember.mutate(payload);
+        }
+        setShowForm(false);
         resetForm();
     };
 
-    if (isLoading) return <div style={{ padding: "80px 0", textAlign: "center" }}><p style={{ fontSize: "14px", color: "var(--text-muted)", fontWeight: 300 }}>Loading team...</p></div>;
+    if (isLoading) {
+        return <div style={{ padding: "80px 0", textAlign: "center", color: "var(--text-muted)" }}>Loading team...</div>;
+    }
 
     return (
-        <div>
-            {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "28px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
                 <div>
-                    <h1 style={{ fontSize: "24px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Team</h1>
-                    <p style={{ marginTop: "4px", fontSize: "14px", color: "var(--text-tertiary)", fontWeight: 300 }}>
-                        {members.length} members · {avgUtil}% avg utilization
+                    <h1 style={{ fontSize: "25px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Team</h1>
+                    <p style={{ marginTop: "5px", fontSize: "13px", color: "var(--text-tertiary)", fontWeight: 300 }}>
+                        People, phase staffing, capacity, bill rates, and execution ownership.
                     </p>
                 </div>
-                <button
-                    onClick={() => setShowAdd(true)}
-                    style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 20px", borderRadius: "6px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "13px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", cursor: "pointer", transition: "all 0.2s" }}
-                    onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(176,122,74,0.2)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
-                >
-                    <Plus size={16} /> Add Member
-                </button>
+                {canInvite && (
+                    <button onClick={openCreate} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 18px", borderRadius: "8px", border: "none", background: "var(--accent-primary)", color: "white", fontSize: "12px", fontWeight: 700, cursor: "pointer", boxShadow: "var(--shadow-sm)" }}>
+                        <Plus size={15} /> Invite Member
+                    </button>
+                )}
             </div>
 
-            {/* Stats */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px", marginBottom: "24px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "12px" }}>
                 {[
-                    { label: "Team Size", value: `${members.length}`, icon: Users, color: "var(--accent-primary)" },
-                    { label: "Avg Utilization", value: `${avgUtil}%`, icon: TrendingUp, color: "var(--accent-secondary)" },
-                    { label: "Total Weekly Hours", value: `${Math.round(members.reduce((s, m) => s + m.weeklyHours[m.weeklyHours.length - 1], 0))}h`, icon: Clock, color: "var(--accent-gold)" },
-                    { label: "Avg Bill Rate", value: `$${Math.round(members.reduce((s, m) => s + m.billRate, 0) / members.length)}`, icon: BarChart3, color: "var(--info)" },
-                ].map((card, i) => (
-                    <div key={i} style={{ padding: "18px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <p style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{card.label}</p>
-                            <card.icon size={14} style={{ color: card.color }} />
+                    { label: "Team Size", value: totals.teamSize, meta: `${(pendingInvites as any[]).length} pending invites`, icon: Users, color: "var(--accent-primary)" },
+                    { label: "Avg Utilization", value: `${avgUtilization}%`, meta: `Target driven by billable time`, icon: Target, color: utilColor(avgUtilization) },
+                    { label: "Planned Hours", value: `${totals.plannedHours}h`, meta: `${totals.weekHours}h logged this week`, icon: Clock, color: "var(--accent-gold)" },
+                    { label: "Billable Value", value: formatCurrency(totals.billableValue), meta: `${formatCurrency(totals.laborCost)} labor cost`, icon: BarChart3, color: "var(--success)" },
+                    { label: "Avg Bill Rate", value: formatCurrency(avgBillRate), meta: "Per hour", icon: Briefcase, color: "var(--info)" },
+                    { label: "Risk Flags", value: totals.highRisk + totals.missingTime, meta: `${totals.highRisk} high risk / ${totals.missingTime} missing time`, icon: AlertTriangle, color: totals.highRisk > 0 ? "var(--danger)" : "var(--warning)" },
+                ].map((card) => {
+                    const Icon = card.icon;
+                    return (
+                        <div key={card.label} style={{ padding: "17px", borderRadius: "14px", background: "linear-gradient(135deg, var(--bg-card), var(--bg-warm))", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                                <p style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em" }}>{card.label}</p>
+                                <Icon size={15} style={{ color: card.color }} />
+                            </div>
+                            <p style={{ fontSize: "21px", fontWeight: 500, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{card.value}</p>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "5px" }}>{card.meta}</p>
                         </div>
-                        <p style={{ marginTop: "8px", fontSize: "22px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{card.value}</p>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
 
-            {/* Toolbar */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", borderRadius: "6px", padding: "8px 12px", maxWidth: "280px", flex: 1 }}>
-                    <Search size={14} style={{ color: "var(--text-muted)" }} />
-                    <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search team..." style={{ flex: 1, border: "none", background: "transparent", fontSize: "13px", color: "var(--text-primary)", outline: "none", fontFamily: "inherit" }} />
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "9px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", borderRadius: "10px", padding: "10px 12px", minWidth: "280px" }}>
+                    <Search size={15} style={{ color: "var(--text-muted)" }} />
+                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people, roles, projects..." style={{ flex: 1, border: "none", background: "transparent", outline: "none", color: "var(--text-primary)", fontFamily: "inherit", fontSize: "13px" }} />
                 </div>
-                <div style={{ display: "flex", gap: "2px", background: "var(--bg-secondary)", borderRadius: "6px", padding: "2px" }}>
+                <div style={{ display: "flex", gap: "3px", padding: "3px", borderRadius: "10px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
                     {[
                         { key: "directory" as const, label: "Directory" },
-                        { key: "utilization" as const, label: "Utilization" },
-                    ].map(({ key, label }) => (
-                        <button key={key} onClick={() => setView(key)}
-                            style={{ padding: "7px 14px", borderRadius: "4px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: view === key ? 500 : 400, background: view === key ? "var(--bg-card)" : "transparent", color: view === key ? "var(--text-primary)" : "var(--text-muted)", boxShadow: view === key ? "var(--shadow-sm)" : "none" }}>
-                            {label}
+                        { key: "capacity" as const, label: "Capacity" },
+                        { key: "coverage" as const, label: "Project Coverage" },
+                    ].map((tab) => (
+                        <button key={tab.key} onClick={() => setView(tab.key)} style={{ padding: "8px 13px", borderRadius: "8px", border: "none", background: view === tab.key ? "var(--bg-card)" : "transparent", color: view === tab.key ? "var(--accent-primary)" : "var(--text-muted)", cursor: "pointer", fontSize: "12px", fontWeight: view === tab.key ? 700 : 500 }}>
+                            {tab.label}
                         </button>
                     ))}
                 </div>
             </div>
 
-            {/* Directory view */}
+            {lastInviteLink && (
+                <div style={{ padding: "12px 14px", borderRadius: "12px", background: "rgba(176,138,48,0.1)", border: "1px solid rgba(176,138,48,0.25)", color: "var(--warning)", display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: "12px", fontWeight: 600 }}>Email provider is not configured, so use this dev invite link:</span>
+                    <span style={{ fontSize: "11px", color: "var(--text-primary)", wordBreak: "break-all" }}>{lastInviteLink}</span>
+                    <button onClick={() => navigator.clipboard?.writeText(lastInviteLink)} style={{ padding: "7px 10px", borderRadius: "8px", border: "none", background: "var(--accent-primary)", color: "white", cursor: "pointer", fontSize: "11px", fontWeight: 700 }}>Copy</button>
+                </div>
+            )}
+
             {view === "directory" && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "14px" }}>
-                    {filtered.map((m) => {
-                        const avgHours = m.weeklyHours.reduce((a, b) => a + b, 0) / m.weeklyHours.length;
-                        const utilPct = Math.round((avgHours / 40) * 100);
-                        return (
-                            <div key={m.id} style={{ padding: "20px", borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", transition: "all 0.2s" }}
-                                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "var(--shadow-md)"; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "var(--shadow-card)"; }}
-                            >
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                                    <div style={{ display: "flex", gap: "12px" }}>
-                                        <div style={{ width: "44px", height: "44px", borderRadius: "50%", background: "var(--accent-primary)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "14px", fontWeight: 600, flexShrink: 0 }}>
-                                            {m.initials}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: "14px" }}>
+                    {filtered.map((member) => (
+                        <div key={member.id} style={{ padding: "20px", borderRadius: "16px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
+                                <div style={{ display: "flex", gap: "12px" }}>
+                                    <div style={{ width: "46px", height: "46px", borderRadius: "14px", background: "linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))", color: "white", display: "grid", placeItems: "center", fontWeight: 700 }}>{member.initials}</div>
+                                    <div>
+                                        <h3 style={{ fontSize: "14px", color: "var(--text-primary)", fontWeight: 700 }}>{member.name}</h3>
+                                        <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>{member.title}</p>
+                                        <div style={{ display: "flex", gap: "7px", alignItems: "center", marginTop: "7px", flexWrap: "wrap" }}>
+                                            <span style={{ fontSize: "10px", fontWeight: 700, padding: "4px 8px", borderRadius: "999px", color: "var(--accent-primary)", background: "rgba(176,122,74,0.1)", textTransform: "uppercase" }}>{member.role}</span>
+                                            <a href={`mailto:${member.email}`} style={{ color: "var(--text-muted)", display: "flex" }}><Mail size={13} /></a>
+                                            {member.phone && <span title={member.phone} style={{ color: "var(--text-muted)", display: "flex" }}><Phone size={13} /></span>}
                                         </div>
+                                    </div>
+                                </div>
+                                {canInvite && <button onClick={() => openEdit(member)} style={{ padding: "8px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}><Edit3 size={14} /></button>}
+                            </div>
+
+                            <div style={{ marginTop: "18px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "9px" }}>
+                                {[
+                                    { label: "Planned", value: `${member.plannedHours}h` },
+                                    { label: "Actual", value: `${member.totalHours}h` },
+                                    { label: "Billable", value: `${member.billableHours}h` },
+                                    { label: "Util", value: `${member.utilization}%`, color: utilColor(member.utilization) },
+                                ].map((metric) => (
+                                    <div key={metric.label} style={{ padding: "10px", borderRadius: "10px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                        <p style={{ fontSize: "9px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "5px" }}>{metric.label}</p>
+                                        <p style={{ fontSize: "13px", fontWeight: 700, color: metric.color || "var(--text-primary)" }}>{metric.value}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div style={{ marginTop: "14px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "var(--text-muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                    <span>Capacity</span>
+                                    <span>{member.plannedUtilization}% planned / target {member.targetUtil}%</span>
+                                </div>
+                                <div style={{ height: "8px", borderRadius: "999px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                                    <div style={{ width: `${Math.min(member.plannedUtilization, 130)}%`, height: "100%", background: utilColor(member.plannedUtilization), borderRadius: "999px" }} />
+                                </div>
+                            </div>
+
+                            <div style={{ marginTop: "14px", display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center" }}>
+                                <div>
+                                    <p style={{ fontSize: "11px", color: "var(--text-muted)" }}>Projects</p>
+                                    <p style={{ fontSize: "12px", color: "var(--text-primary)", marginTop: "3px" }}>{member.activeProjects.slice(0, 2).join(", ") || "No assignments"}{member.activeProjects.length > 2 ? ` +${member.activeProjects.length - 2}` : ""}</p>
+                                </div>
+                                <span style={{ fontSize: "10px", fontWeight: 800, color: riskColor(member.risk), background: `${riskColor(member.risk)}12`, padding: "5px 9px", borderRadius: "999px", textTransform: "uppercase" }}>{member.risk} risk</span>
+                            </div>
+                        </div>
+                    ))}
+                    {(pendingInvites as any[])
+                        .filter((invite: any) => {
+                            const q = search.toLowerCase();
+                            return !q || invite.name.toLowerCase().includes(q) || invite.email.toLowerCase().includes(q) || invite.title.toLowerCase().includes(q);
+                        })
+                        .map((invite: any) => (
+                            <div key={invite.id} style={{ padding: "20px", borderRadius: "16px", background: "var(--bg-card)", border: "1px dashed var(--border-secondary)", boxShadow: "var(--shadow-sm)", opacity: 0.68 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
+                                    <div style={{ display: "flex", gap: "12px" }}>
+                                        <div style={{ width: "46px", height: "46px", borderRadius: "14px", background: "var(--bg-secondary)", color: "var(--accent-primary)", display: "grid", placeItems: "center", fontWeight: 800 }}>{initials(invite.name)}</div>
                                         <div>
-                                            <h3 style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{m.name}</h3>
-                                            <p style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 300, marginTop: "1px" }}>{m.title}</p>
-                                            <div style={{ marginTop: "6px", display: "flex", gap: "8px", alignItems: "center" }}>
-                                                <span style={{ fontSize: "9px", padding: "2px 6px", borderRadius: "3px", background: "var(--bg-secondary)", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{m.role}</span>
-                                                <a href={`mailto:${m.email}`} style={{ color: "var(--text-muted)", display: "flex" }} title={m.email}><Mail size={11} /></a>
-                                                {m.phone && <span style={{ color: "var(--text-muted)", display: "flex" }} title={m.phone}><Phone size={11} /></span>}
+                                            <h3 style={{ fontSize: "14px", color: "var(--text-primary)", fontWeight: 700 }}>{invite.name}</h3>
+                                            <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>{invite.title || "Invited team member"}</p>
+                                            <div style={{ display: "flex", gap: "7px", alignItems: "center", marginTop: "7px", flexWrap: "wrap" }}>
+                                                <span style={{ fontSize: "10px", fontWeight: 800, padding: "4px 8px", borderRadius: "999px", color: "var(--warning)", background: "rgba(176,138,48,0.12)", textTransform: "uppercase" }}>Pending invite</span>
+                                                <span style={{ fontSize: "10px", fontWeight: 700, padding: "4px 8px", borderRadius: "999px", color: "var(--accent-primary)", background: "rgba(176,122,74,0.1)", textTransform: "uppercase" }}>{invite.role}</span>
                                             </div>
                                         </div>
                                     </div>
-                                    <button style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><MoreHorizontal size={14} /></button>
                                 </div>
+                                <div style={{ marginTop: "16px", padding: "12px", borderRadius: "12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                                    <p style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{invite.email}</p>
+                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}>Expires {new Date(invite.expiresAt).toLocaleDateString()}</p>
+                                </div>
+                                <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "14px" }}>
+                                    <button onClick={() => resendInvite.mutate({ id: invite.id })} style={{ padding: "8px 11px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "transparent", color: "var(--accent-primary)", cursor: "pointer", fontSize: "11px", fontWeight: 700 }}>Resend</button>
+                                    <button onClick={() => revokeInvite.mutate({ id: invite.id })} style={{ padding: "8px 11px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "transparent", color: "var(--danger)", cursor: "pointer", fontSize: "11px", fontWeight: 700 }}>Revoke</button>
+                                </div>
+                            </div>
+                        ))}
+                </div>
+            )}
 
-                                <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: "1px solid var(--border-primary)", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+            {view === "capacity" && (
+                <div style={{ borderRadius: "16px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                            <tr style={{ background: "var(--bg-warm)", borderBottom: "1px solid var(--border-primary)" }}>
+                                {["Member", "Planned", "Actual", "Remaining", "Open Work", "Financials", "Health"].map((head) => <th key={head} style={{ padding: "12px 14px", textAlign: "left", fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{head}</th>)}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filtered.map((member) => (
+                                <tr key={member.id} style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                                    <td style={{ padding: "14px" }}><div style={{ display: "flex", gap: "10px", alignItems: "center" }}><div style={{ width: "32px", height: "32px", borderRadius: "50%", background: "var(--bg-warm)", color: "var(--accent-primary)", display: "grid", placeItems: "center", fontSize: "11px", fontWeight: 800 }}>{member.initials}</div><div><p style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>{member.name}</p><p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>{member.title}</p></div></div></td>
+                                    <td style={{ padding: "14px", fontSize: "12px", color: "var(--text-primary)", fontWeight: 700 }}>{member.plannedHours}h <span style={{ color: utilColor(member.plannedUtilization), fontSize: "10px" }}>({member.plannedUtilization}%)</span></td>
+                                    <td style={{ padding: "14px", fontSize: "12px", color: "var(--text-primary)" }}>{member.totalHours}h total<br /><span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{member.weekHours}h this week</span></td>
+                                    <td style={{ padding: "14px", fontSize: "12px", color: member.remainingHours === 0 ? "var(--success)" : "var(--text-primary)", fontWeight: 700 }}>{member.remainingHours}h</td>
+                                    <td style={{ padding: "14px", fontSize: "11px", color: "var(--text-secondary)" }}>{member.openTasks.length} tasks<br />{member.openDeliverables.length} deliverables</td>
+                                    <td style={{ padding: "14px", fontSize: "11px", color: "var(--text-secondary)" }}>{formatCurrency(member.billableValue)} value<br /><span style={{ color: member.margin >= 0 ? "var(--success)" : "var(--danger)" }}>{formatCurrency(member.margin)} margin</span></td>
+                                    <td style={{ padding: "14px" }}><span style={{ fontSize: "10px", fontWeight: 800, color: riskColor(member.risk), background: `${riskColor(member.risk)}12`, padding: "5px 9px", borderRadius: "999px", textTransform: "uppercase" }}>{member.risk}</span>{member.missingRecentTime && <p style={{ fontSize: "10px", color: "var(--warning)", marginTop: "5px" }}>Missing recent time</p>}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {view === "coverage" && (
+                <div style={{ display: "grid", gap: "12px" }}>
+                    {phaseCoverage.length === 0 && <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)", background: "var(--bg-card)", border: "1px dashed var(--border-secondary)", borderRadius: "16px" }}>No phase assignments yet. Assign members inside a project overview phase to build coverage.</div>}
+                    {phaseCoverage.map((phase) => {
+                        const coveragePct = phase.budgetHours > 0 ? Math.round((phase.plannedHours / phase.budgetHours) * 100) : 0;
+                        const color = coveragePct > 110 ? "var(--danger)" : coveragePct >= 70 ? "var(--success)" : "var(--warning)";
+                        return (
+                            <div key={phase.id} style={{ padding: "18px", borderRadius: "16px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: "14px", alignItems: "flex-start", flexWrap: "wrap" }}>
                                     <div>
-                                        <p style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Cost Rate</p>
-                                        <p style={{ fontSize: "13px", color: "var(--text-primary)", marginTop: "2px" }}>${m.costRate}/hr</p>
+                                        <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>{phase.projectName}</p>
+                                        <h3 style={{ fontSize: "15px", color: "var(--text-primary)", fontWeight: 700, marginTop: "3px" }}>{phase.phaseName}</h3>
                                     </div>
-                                    <div>
-                                        <p style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Bill Rate</p>
-                                        <p style={{ fontSize: "13px", color: "var(--text-primary)", marginTop: "2px" }}>${m.billRate}/hr</p>
-                                    </div>
-                                    <div>
-                                        <p style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Utilization</p>
-                                        <p style={{ fontSize: "13px", color: getUtilColor(utilPct), fontWeight: 500, marginTop: "2px" }}>{utilPct}%</p>
+                                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                        <span style={{ fontSize: "10px", color, background: `${color}12`, borderRadius: "999px", padding: "5px 9px", fontWeight: 800 }}>{coveragePct}% covered</span>
+                                        <span style={{ fontSize: "10px", color: "var(--text-muted)", background: "var(--bg-secondary)", borderRadius: "999px", padding: "5px 9px" }}>{phase.openTasks} open tasks / {phase.openDeliverables} deliverables</span>
                                     </div>
                                 </div>
-
-                                <div style={{ marginTop: "12px" }}>
-                                    <p style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "4px" }}>Projects</p>
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                                        {m.projects.length > 0 ? m.projects.map((p) => (
-                                            <span key={p} style={{ fontSize: "10px", padding: "2px 8px", borderRadius: "3px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>{p}</span>
-                                        )) : (
-                                            <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>No projects assigned</span>
-                                        )}
-                                    </div>
+                                <div style={{ marginTop: "14px", height: "8px", borderRadius: "999px", background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                                    <div style={{ height: "100%", width: `${Math.min(coveragePct, 130)}%`, background: color, borderRadius: "999px" }} />
+                                </div>
+                                <div style={{ marginTop: "14px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                                    {phase.assigned.map((person: any, index: number) => (
+                                        <span key={`${person.name}-${index}`} style={{ display: "inline-flex", alignItems: "center", gap: "7px", padding: "7px 10px", borderRadius: "999px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: "11px" }}>
+                                            <span style={{ width: "22px", height: "22px", borderRadius: "50%", background: "rgba(176,122,74,0.12)", color: "var(--accent-primary)", display: "grid", placeItems: "center", fontSize: "9px", fontWeight: 800 }}>{initials(person.name)}</span>
+                                            {person.name} / {person.role || "Team"} / {person.hours}h
+                                        </span>
+                                    ))}
                                 </div>
                             </div>
                         );
@@ -260,186 +425,52 @@ export default function TeamPage() {
                 </div>
             )}
 
-            {/* Utilization breakdown view */}
-            {view === "utilization" && (
-                <div style={{ borderRadius: "10px", background: "var(--bg-card)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead>
-                            <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
-                                <th style={{ padding: "10px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", minWidth: "180px" }}>Team Member</th>
-                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Billable</th>
-                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Non-Billable</th>
-                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>PTO</th>
-                                <th style={{ padding: "10px 14px", textAlign: "center", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Total</th>
-                                <th style={{ padding: "10px 14px", textAlign: "left", fontSize: "10px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", minWidth: "150px" }}>Utilization</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filtered.map((m) => {
-                                const utilPct = m.totalHours > 0 ? Math.round((m.billableHours / m.totalHours) * 100) : 0;
-                                const billPct = m.totalHours > 0 ? Math.round((m.billableHours / m.totalHours) * 100) : 0;
-                                const nonBillPct = m.totalHours > 0 ? Math.round((m.nonBillableHours / m.totalHours) * 100) : 0;
-                                return (
-                                    <tr key={m.id} style={{ borderBottom: "1px solid var(--border-primary)" }}>
-                                        <td style={{ padding: "12px 14px" }}>
-                                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                                <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: "var(--accent-primary)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "10px", fontWeight: 600 }}>{m.initials}</div>
-                                                <div>
-                                                    <p style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-primary)" }}>{m.name}</p>
-                                                    <p style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 300 }}>{m.title}</p>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
-                                            <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--success)" }}>{m.billableHours}h</span>
-                                        </td>
-                                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
-                                            <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-muted)" }}>{m.nonBillableHours}h</span>
-                                        </td>
-                                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
-                                            <span style={{ fontSize: "13px", fontWeight: 500, color: m.ptoHours > 0 ? "#6B8DD6" : "var(--text-muted)" }}>{m.ptoHours}h</span>
-                                            {m.ptoHours > 0 && <span style={{ fontSize: "9px", color: "#6B8DD6", display: "block" }}>{Math.round(m.ptoHours / 8)}d</span>}
-                                        </td>
-                                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
-                                            <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{m.totalHours}h</span>
-                                        </td>
-                                        <td style={{ padding: "12px 14px" }}>
-                                            {m.totalHours > 0 ? (
-                                                <div>
-                                                    <div style={{ display: "flex", height: "8px", borderRadius: "4px", overflow: "hidden", background: "var(--bg-secondary)" }}>
-                                                        <div style={{ width: `${billPct}%`, background: "var(--success)", transition: "width 0.3s" }} />
-                                                        <div style={{ width: `${nonBillPct}%`, background: "var(--warning)", transition: "width 0.3s" }} />
-                                                    </div>
-                                                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "3px" }}>
-                                                        <span style={{ fontSize: "10px", color: getUtilColor(utilPct), fontWeight: 600 }}>{utilPct}% billable</span>
-                                                        <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>target: {m.targetUtil}%</span>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <span style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic" }}>No entries</span>
-                                            )}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-
-
-            {/* ═══ Add Member Modal ═══ */}
-            {
-                showAdd && (
-                    <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setShowAdd(false); resetForm(); }}>
-                        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(6px)" }} />
-                        <div onClick={(e) => e.stopPropagation()}
-                            style={{ position: "relative", width: "520px", maxHeight: "85vh", overflow: "auto", background: "var(--bg-card)", borderRadius: "14px", border: "1px solid var(--border-secondary)", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}
-                        >
-                            {/* Header */}
-                            <div style={{ padding: "22px 28px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <div>
-                                    <h2 style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>Add Team Member</h2>
-                                    <p style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 300, marginTop: "2px" }}>Invite a new member to your firm</p>
-                                </div>
-                                <button onClick={() => { setShowAdd(false); resetForm(); }}
-                                    style={{ width: "30px", height: "30px", borderRadius: "6px", border: "1px solid var(--border-primary)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
-                                    <X size={14} />
-                                </button>
+            {showForm && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 220, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowForm(false)}>
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.32)", backdropFilter: "blur(7px)" }} />
+                    <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "560px", maxWidth: "calc(100vw - 32px)", maxHeight: "86vh", overflow: "auto", background: "var(--bg-card)", borderRadius: "16px", border: "1px solid var(--border-secondary)", boxShadow: "0 24px 70px rgba(0,0,0,0.18)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "22px 26px", borderBottom: "1px solid var(--border-primary)" }}>
+                            <div><h2 style={{ fontSize: "18px", fontWeight: 400, color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>{form.id ? "Edit Team Member" : "Invite Team Member"}</h2><p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "3px" }}>Invitees receive a 7-day onboarding link and can only set their password/profile basics.</p></div>
+                            <button onClick={() => setShowForm(false)} style={{ width: "32px", height: "32px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}><X size={15} /></button>
+                        </div>
+                        <div style={{ padding: "24px 26px", display: "grid", gap: "14px" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                                <input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} placeholder="Full name" style={fieldStyle} />
+                                <input value={form.email} onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))} placeholder="Email" disabled={!!form.id} style={{ ...fieldStyle, opacity: form.id ? 0.55 : 1 }} />
                             </div>
-
-                            {/* Body */}
-                            <div style={{ padding: "24px 28px" }}>
-                                {/* Name & Email */}
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
-                                    <div>
-                                        <label style={labelStyle}>Full Name *</label>
-                                        <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="e.g. Jordan Lee"
-                                            style={fieldStyle}
-                                            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
-                                            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
-                                    </div>
-                                    <div>
-                                        <label style={labelStyle}>Email *</label>
-                                        <input type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} placeholder="jordan@studio.com"
-                                            style={fieldStyle}
-                                            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
-                                            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
-                                    </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                                <input value={form.phone} onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))} placeholder="Phone" style={fieldStyle} />
+                                <select value={form.role} onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))} style={fieldStyle}>{roles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select>
+                            </div>
+                            <select value={form.title} onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))} style={fieldStyle}><option value="">Select title...</option>{titles.map((title) => <option key={title} value={title}>{title}</option>)}</select>
+                            <div style={{ padding: "16px", borderRadius: "12px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)" }}>
+                                <p style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "12px" }}>Billing & Capacity</p>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+                                    <input type="number" min="0" value={form.costRate} onChange={(e) => setForm((prev) => ({ ...prev, costRate: e.target.value }))} placeholder="Cost/hr" style={fieldStyle} />
+                                    <input type="number" min="0" value={form.billRate} onChange={(e) => setForm((prev) => ({ ...prev, billRate: e.target.value }))} placeholder="Bill/hr" style={fieldStyle} />
+                                    <input type="number" min="0" max="100" value={form.targetUtil} onChange={(e) => setForm((prev) => ({ ...prev, targetUtil: e.target.value }))} placeholder="Target %" style={fieldStyle} />
                                 </div>
-
-                                {/* Phone & Role */}
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
-                                    <div>
-                                        <label style={labelStyle}>Phone</label>
-                                        <input type="tel" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} placeholder="(503) 555-0000"
-                                            style={fieldStyle}
-                                            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-primary)"; }}
-                                            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }} />
-                                    </div>
-                                    <div>
-                                        <label style={labelStyle}>Role</label>
-                                        <select value={formRole} onChange={(e) => setFormRole(e.target.value)}
-                                            style={{ ...fieldStyle, cursor: "pointer" }}>
-                                            {roles.map((r) => <option key={r} value={r}>{r}</option>)}
-                                        </select>
-                                    </div>
-                                </div>
-
-                                {/* Title */}
-                                <div style={{ marginBottom: "18px" }}>
-                                    <label style={labelStyle}>Title *</label>
-                                    <select value={formTitle} onChange={(e) => setFormTitle(e.target.value)}
-                                        style={{ ...fieldStyle, cursor: "pointer" }}>
-                                        <option value="">Select title…</option>
-                                        {titles.map((t) => <option key={t} value={t}>{t}</option>)}
-                                    </select>
-                                </div>
-
-                                {/* Rates */}
-                                <div style={{ padding: "18px", borderRadius: "8px", background: "var(--bg-warm)", border: "1px solid var(--border-primary)", marginBottom: "22px" }}>
-                                    <p style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "14px" }}>Billing & Rates</p>
-                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}>
-                                        <div>
-                                            <label style={labelStyle}>Cost Rate ($/hr)</label>
-                                            <input type="number" min="0" value={formCostRate} onChange={(e) => setFormCostRate(parseInt(e.target.value) || 0)}
-                                                style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
-                                        </div>
-                                        <div>
-                                            <label style={labelStyle}>Bill Rate ($/hr)</label>
-                                            <input type="number" min="0" value={formBillRate} onChange={(e) => setFormBillRate(parseInt(e.target.value) || 0)}
-                                                style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
-                                        </div>
-                                        <div>
-                                            <label style={labelStyle}>Target Util %</label>
-                                            <input type="number" min="0" max="100" value={formTargetUtil} onChange={(e) => setFormTargetUtil(parseInt(e.target.value) || 0)}
-                                                style={{ ...fieldStyle, background: "var(--bg-card)", textAlign: "center" }} />
-                                        </div>
-                                    </div>
-                                    {formCostRate > 0 && formBillRate > 0 && (
-                                        <p style={{ marginTop: "10px", fontSize: "11px", color: "var(--text-muted)" }}>
-                                            Multiplier: <strong style={{ color: "var(--accent-primary)" }}>{(formBillRate / formCostRate).toFixed(2)}x</strong> · Margin: <strong style={{ color: "var(--success)" }}>{Math.round(((formBillRate - formCostRate) / formBillRate) * 100)}%</strong>
-                                        </p>
-                                    )}
-                                </div>
-
-                                {/* Actions */}
-                                <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                                    <button onClick={() => { setShowAdd(false); resetForm(); }}
-                                        style={{ padding: "11px 20px", borderRadius: "6px", border: "1px solid var(--border-secondary)", background: "transparent", fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}>
-                                        Cancel
-                                    </button>
-                                    <button onClick={handleAdd}
-                                        disabled={!formName.trim() || !formEmail.trim() || !formTitle}
-                                        style={{ padding: "11px 24px", borderRadius: "6px", border: "none", background: (formName.trim() && formEmail.trim() && formTitle) ? "var(--accent-primary)" : "var(--bg-tertiary)", color: (formName.trim() && formEmail.trim() && formTitle) ? "white" : "var(--text-muted)", fontSize: "13px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", cursor: (formName.trim() && formEmail.trim() && formTitle) ? "pointer" : "not-allowed", transition: "all 0.2s" }}>
-                                        Add Member
-                                    </button>
-                                </div>
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                                <button onClick={() => setShowForm(false)} style={{ padding: "10px 16px", borderRadius: "8px", border: "1px solid var(--border-secondary)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}>Cancel</button>
+                                <button onClick={saveMember} disabled={!form.name.trim() || !form.email.trim() || !form.title.trim() || inviteMember.isPending || updateMember.isPending} style={{ padding: "10px 18px", borderRadius: "8px", border: "none", background: "var(--accent-primary)", color: "white", fontWeight: 700, cursor: "pointer", opacity: !form.name.trim() || !form.email.trim() || !form.title.trim() ? 0.55 : 1 }}>{form.id ? "Save Member" : "Send Invite"}</button>
                             </div>
                         </div>
                     </div>
-                )
-            }
-        </div >
+                </div>
+            )}
+        </div>
     );
 }
+
+const fieldStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: "8px",
+    border: "1px solid var(--border-secondary)",
+    background: "var(--bg-card)",
+    color: "var(--text-primary)",
+    fontSize: "13px",
+    fontFamily: "inherit",
+    outline: "none",
+};
