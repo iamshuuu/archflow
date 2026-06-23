@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { trpc } from "@/app/providers";
+import { useSession } from "next-auth/react";
 import { AlertTriangle, BarChart3, Briefcase, CheckCircle, Clock, Edit3, Mail, Phone, Plus, Search, Target, TrendingUp, Users, X } from "lucide-react";
 import { useCurrencyFormatter } from "../useCurrencyFormatter";
 
@@ -44,10 +45,13 @@ const weekAgoIso = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10
 
 export default function TeamPage() {
     const { formatCurrency } = useCurrencyFormatter();
+    const { data: session } = useSession();
     const utils = trpc.useUtils();
     const { data: rawMembers = [], isLoading } = trpc.team.list.useQuery();
     const { data: inviteContext } = trpc.team.inviteContext.useQuery();
-    const canInvite = !!inviteContext?.canInvite;
+    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+    const sessionCanInvite = sessionRole === "owner" || sessionRole === "admin" || sessionRole === "manager";
+    const canInvite = !!inviteContext?.canInvite || sessionCanInvite;
     const { data: pendingInvites = [] } = trpc.team.pendingInvites.useQuery(undefined, { enabled: canInvite });
     const inviteMember = trpc.team.invite.useMutation({ onSuccess: (result) => { utils.team.pendingInvites.invalidate(); setLastInviteLink(result.inviteUrl || ""); } });
     const resendInvite = trpc.team.resendInvite.useMutation({ onSuccess: (result) => { utils.team.pendingInvites.invalidate(); setLastInviteLink(result.inviteUrl || ""); } });
@@ -59,6 +63,7 @@ export default function TeamPage() {
     const [showForm, setShowForm] = useState(false);
     const [form, setForm] = useState<MemberForm>(emptyForm);
     const [lastInviteLink, setLastInviteLink] = useState("");
+    const [inviteNotice, setInviteNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
     const members = useMemo(() => (rawMembers as any[]).map((member) => {
         const entries = member.timeEntries || [];
@@ -189,7 +194,7 @@ export default function TeamPage() {
         });
         setShowForm(true);
     };
-    const saveMember = () => {
+    const saveMember = async () => {
         if (!form.name.trim() || !form.email.trim() || !form.title.trim()) return;
         const payload = {
             name: form.name.trim(),
@@ -201,13 +206,22 @@ export default function TeamPage() {
             billRate: Number(form.billRate || 0),
             targetUtil: Number(form.targetUtil || 0),
         };
-        if (form.id) {
-            updateMember.mutate({ id: form.id, name: payload.name, role: payload.role, title: payload.title, costRate: payload.costRate, billRate: payload.billRate, targetUtil: payload.targetUtil });
-        } else {
-            inviteMember.mutate(payload);
+        try {
+            if (form.id) {
+                await updateMember.mutateAsync({ id: form.id, name: payload.name, role: payload.role, title: payload.title, costRate: payload.costRate, billRate: payload.billRate, targetUtil: payload.targetUtil });
+                setInviteNotice({ tone: "success", text: `Updated ${payload.name}.` });
+            } else {
+                const result = await inviteMember.mutateAsync(payload);
+                await utils.team.pendingInvites.invalidate();
+                setLastInviteLink(result.inviteUrl);
+                setInviteNotice({ tone: "success", text: `Invite sent to ${payload.email}.` });
+            }
+            setShowForm(false);
+            resetForm();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to save team member.";
+            setInviteNotice({ tone: "error", text: message });
         }
-        setShowForm(false);
-        resetForm();
     };
 
     if (isLoading) {
@@ -271,9 +285,16 @@ export default function TeamPage() {
                 </div>
             </div>
 
+            {inviteNotice && (
+                <div style={{ padding: "12px 14px", borderRadius: "12px", background: inviteNotice.tone === "success" ? "rgba(90,122,70,0.10)" : "rgba(176,80,64,0.10)", border: `1px solid ${inviteNotice.tone === "success" ? "rgba(90,122,70,0.24)" : "rgba(176,80,64,0.24)"}`, color: inviteNotice.tone === "success" ? "var(--success)" : "var(--danger)", display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: "12px", fontWeight: 600 }}>{inviteNotice.text}</span>
+                    <button onClick={() => setInviteNotice(null)} style={{ padding: "7px 10px", borderRadius: "8px", border: "none", background: "var(--bg-card)", color: "var(--text-secondary)", cursor: "pointer", fontSize: "11px", fontWeight: 700 }}>Dismiss</button>
+                </div>
+            )}
+
             {lastInviteLink && (
                 <div style={{ padding: "12px 14px", borderRadius: "12px", background: "rgba(176,138,48,0.1)", border: "1px solid rgba(176,138,48,0.25)", color: "var(--warning)", display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: "12px", fontWeight: 600 }}>Email provider is not configured, so use this dev invite link:</span>
+                    <span style={{ fontSize: "12px", fontWeight: 600 }}>Invite link:</span>
                     <span style={{ fontSize: "11px", color: "var(--text-primary)", wordBreak: "break-all" }}>{lastInviteLink}</span>
                     <button onClick={() => navigator.clipboard?.writeText(lastInviteLink)} style={{ padding: "7px 10px", borderRadius: "8px", border: "none", background: "var(--accent-primary)", color: "white", cursor: "pointer", fontSize: "11px", fontWeight: 700 }}>Copy</button>
                 </div>

@@ -160,16 +160,9 @@ export const teamRouter = router({
             costRate: z.number().default(0),
             billRate: z.number().default(0),
             targetUtil: z.number().default(75),
-            password: z.string().default("changeme123"),
         }))
-        .mutation(async ({ ctx, input }) => {
-            const currentUser = await requireCurrentUser(ctx);
-            if (!canInvite(currentUser.role)) throw new TRPCError({ code: "FORBIDDEN", message: "Manager access required to invite team members" });
-            const { password, ...rest } = input;
-            const { hashSync } = await import("bcryptjs");
-            return ctx.db.user.create({
-                data: { ...rest, passwordHash: hashSync(password, 10), orgId: currentUser.orgId },
-            });
+        .mutation(async () => {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Use the invite flow for new team members" });
         }),
 
     invite: protectedProcedure
@@ -217,7 +210,7 @@ export const teamRouter = router({
                 inviteUrl,
                 expiresAt,
             });
-            return { invite, inviteUrl: mail.sent ? undefined : inviteUrl, mail };
+            return { invite, inviteUrl, mail };
         }),
 
     resendInvite: protectedProcedure
@@ -245,7 +238,7 @@ export const teamRouter = router({
                 inviteUrl,
                 expiresAt,
             });
-            return { invite: updated, inviteUrl: mail.sent ? undefined : inviteUrl, mail };
+            return { invite: updated, inviteUrl, mail };
         }),
 
     revokeInvite: protectedProcedure

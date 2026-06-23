@@ -38,18 +38,7 @@ export function useCurrencyFormatter() {
     }, [currency, locale]);
 
     const formatCompactCurrency = useMemo(() => {
-        return (value: number, maximumFractionDigits = 1) => {
-            const abs = Math.abs(value);
-            if (abs >= 1_000_000) {
-                const compact = value / 1_000_000;
-                return `${formatCurrency(compact, { maximumFractionDigits, minimumFractionDigits: 0 })}M`;
-            }
-            if (abs >= 1_000) {
-                const compact = value / 1_000;
-                return `${formatCurrency(compact, { maximumFractionDigits, minimumFractionDigits: 0 })}k`;
-            }
-            return formatCurrency(value, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-        };
+        return (value: number) => formatCurrency(value, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
     }, [formatCurrency]);
 
     return { locale, currency, formatCurrency, formatCompactCurrency };

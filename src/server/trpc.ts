@@ -28,7 +28,7 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
 
 // Admin procedure — requires owner or admin role
 export const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-    const role = (ctx.session.user as any)?.role;
+    const role = (ctx.session.user as { role?: string } | undefined)?.role;
     if (role !== "owner" && role !== "admin") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
     }
@@ -37,7 +37,7 @@ export const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
 
 // Manager procedure — requires owner, admin, or manager role
 export const managerProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-    const role = (ctx.session.user as any)?.role;
+    const role = (ctx.session.user as { role?: string } | undefined)?.role;
     if (role !== "owner" && role !== "admin" && role !== "manager") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Manager access required" });
     }

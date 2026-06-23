@@ -1,10 +1,30 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../trpc";
+import { TRPCError } from "@trpc/server";
+import { router, protectedProcedure, type TRPCContext } from "../trpc";
+
+async function requireCurrentUser(ctx: TRPCContext) {
+    const email = ctx.session?.user?.email;
+    if (!email) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated" });
+    const user = await ctx.db.user.findUnique({ where: { email }, select: { id: true, orgId: true } });
+    if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "User not found" });
+    return user;
+}
+
+async function requireConsultantAccess(ctx: TRPCContext, orgId: string, consultantId: string) {
+    const consultant = await ctx.db.consultant.findFirst({ where: { id: consultantId, orgId }, select: { id: true } });
+    if (!consultant) throw new TRPCError({ code: "FORBIDDEN", message: "Consultant not found or inaccessible" });
+    return consultant;
+}
+
+async function requireProjectAccess(ctx: TRPCContext, orgId: string, projectId: string) {
+    const project = await ctx.db.project.findFirst({ where: { id: projectId, orgId }, select: { id: true } });
+    if (!project) throw new TRPCError({ code: "FORBIDDEN", message: "Project not found or inaccessible" });
+    return project;
+}
 
 export const consultantRouter = router({
     list: protectedProcedure.query(async ({ ctx }) => {
-        const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
-        if (!user) return [];
+        const user = await requireCurrentUser(ctx);
         return ctx.db.consultant.findMany({
             where: { orgId: user.orgId },
             include: { bills: true },
@@ -22,8 +42,7 @@ export const consultantRouter = router({
             markupPct: z.number().default(0),
         }))
         .mutation(async ({ ctx, input }) => {
-            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
-            if (!user) throw new Error("User not found");
+            const user = await requireCurrentUser(ctx);
             return ctx.db.consultant.create({
                 data: { ...input, orgId: user.orgId },
                 include: { bills: true },
@@ -42,21 +61,22 @@ export const consultantRouter = router({
             status: z.string().optional(),
         }))
         .mutation(async ({ ctx, input }) => {
+            const user = await requireCurrentUser(ctx);
             const { id, ...data } = input;
+            await requireConsultantAccess(ctx, user.orgId, id);
             return ctx.db.consultant.update({ where: { id }, data });
         }),
 
     delete: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
+            const user = await requireCurrentUser(ctx);
+            await requireConsultantAccess(ctx, user.orgId, input.id);
             return ctx.db.consultant.delete({ where: { id: input.id } });
         }),
 
-    // ─── Bills ───
-
     listBills: protectedProcedure.query(async ({ ctx }) => {
-        const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
-        if (!user) return [];
+        const user = await requireCurrentUser(ctx);
         return ctx.db.consultantBill.findMany({
             where: { orgId: user.orgId },
             include: { consultant: true, project: true },
@@ -74,8 +94,9 @@ export const consultantRouter = router({
             invoiceRef: z.string().default(""),
         }))
         .mutation(async ({ ctx, input }) => {
-            const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
-            if (!user) throw new Error("User not found");
+            const user = await requireCurrentUser(ctx);
+            await requireConsultantAccess(ctx, user.orgId, input.consultantId);
+            await requireProjectAccess(ctx, user.orgId, input.projectId);
             return ctx.db.consultantBill.create({
                 data: { ...input, orgId: user.orgId },
                 include: { consultant: true, project: true },
@@ -85,6 +106,9 @@ export const consultantRouter = router({
     updateBillStatus: protectedProcedure
         .input(z.object({ id: z.string(), status: z.string() }))
         .mutation(async ({ ctx, input }) => {
+            const user = await requireCurrentUser(ctx);
+            const bill = await ctx.db.consultantBill.findFirst({ where: { id: input.id, orgId: user.orgId }, select: { id: true } });
+            if (!bill) throw new TRPCError({ code: "FORBIDDEN", message: "Bill not found or inaccessible" });
             return ctx.db.consultantBill.update({
                 where: { id: input.id },
                 data: { status: input.status },
@@ -92,14 +116,13 @@ export const consultantRouter = router({
         }),
 
     billSummary: protectedProcedure.query(async ({ ctx }) => {
-        const user = await ctx.db.user.findUnique({ where: { email: ctx.session!.user!.email! } });
-        if (!user) return { total: 0, pending: 0, approved: 0, paid: 0 };
+        const user = await requireCurrentUser(ctx);
         const bills = await ctx.db.consultantBill.findMany({ where: { orgId: user.orgId } });
         return {
-            total: bills.reduce((s: number, b: any) => s + b.amount, 0),
-            pending: bills.filter((b: any) => b.status === "pending").reduce((s: number, b: any) => s + b.amount, 0),
-            approved: bills.filter((b: any) => b.status === "approved").reduce((s: number, b: any) => s + b.amount, 0),
-            paid: bills.filter((b: any) => b.status === "paid").reduce((s: number, b: any) => s + b.amount, 0),
+            total: bills.reduce((s: number, b) => s + b.amount, 0),
+            pending: bills.filter((b) => b.status === "pending").reduce((s: number, b) => s + b.amount, 0),
+            approved: bills.filter((b) => b.status === "approved").reduce((s: number, b) => s + b.amount, 0),
+            paid: bills.filter((b) => b.status === "paid").reduce((s: number, b) => s + b.amount, 0),
         };
     }),
 });

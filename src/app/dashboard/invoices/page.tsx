@@ -46,7 +46,7 @@ const paymentTermsOptions = [
 export default function InvoicesPage() {
     const utils = trpc.useUtils();
     const { formatCurrency } = useCurrencyFormatter();
-    const { data: rawInvoices = [], isLoading } = trpc.invoice.list.useQuery();
+    const { data: rawInvoices = [] } = trpc.invoice.list.useQuery();
     const { data: projects = [] } = trpc.project.list.useQuery();
     const { data: template } = trpc.invoice.getTemplate.useQuery();
     const createInvoice = trpc.invoice.create.useMutation({ onSuccess: () => utils.invoice.invalidate() });
@@ -66,8 +66,12 @@ export default function InvoicesPage() {
 
     // Create form
     const [createProject, setCreateProject] = useState("");
-    const [createDate, setCreateDate] = useState(new Date().toISOString().slice(0, 10));
-    const [createDueDate, setCreateDueDate] = useState(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+    const [createDate, setCreateDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const [createDueDate, setCreateDueDate] = useState(() => {
+        const due = new Date();
+        due.setDate(due.getDate() + 30);
+        return due.toISOString().slice(0, 10);
+    });
     const [createNotes, setCreateNotes] = useState("");
     const [createLines, setCreateLines] = useState<LineItem[]>([{ description: "", qty: 1, rate: 150 }]);
     const [createTerms, setCreateTerms] = useState("net30");
@@ -93,10 +97,19 @@ export default function InvoicesPage() {
     const [tplFooter, setTplFooter] = useState(template?.footerText || "Payment is due within 30 days.");
     const [tplAccent, setTplAccent] = useState(template?.accentColor || "#B07A4A");
 
-    const invoices = (rawInvoices as any[]).map((inv: any) => ({
-        id: inv.id, number: inv.number, client: inv.client?.name || "—", project: inv.project?.name || "—",
-        amount: inv.amount, date: inv.date, dueDate: inv.dueDate, status: inv.status as InvoiceStatus,
-        lineItems: inv.lineItems || [], notes: inv.notes || "", paymentUrl: inv.paymentUrl || "", clientId: inv.clientId,
+    const invoices = rawInvoices.map((inv) => ({
+        id: inv.id,
+        number: inv.number,
+        client: inv.client?.name || "—",
+        project: inv.project?.name || "—",
+        amount: inv.amount,
+        date: inv.date,
+        dueDate: inv.dueDate,
+        status: inv.status as InvoiceStatus,
+        lineItems: inv.lineItems || [],
+        notes: inv.notes || "",
+        paymentUrl: inv.paymentUrl || "",
+        clientId: inv.clientId,
     }));
 
     const filtered = invoices.filter((inv) => {
@@ -106,7 +119,7 @@ export default function InvoicesPage() {
     });
 
     const handleCreate = async () => {
-        const proj = (projects as any[]).find((p: any) => p.id === createProject);
+        const proj = projects.find((p) => p.id === createProject);
         if (!proj) return;
         await createInvoice.mutateAsync({
             clientId: proj.clientId, projectId: createProject, date: createDate, dueDate: createDueDate,
@@ -141,7 +154,9 @@ export default function InvoicesPage() {
     };
 
     const updateLine = (idx: number, field: keyof LineItem, value: string | number) => {
-        const newLines = [...createLines]; (newLines[idx] as any)[field] = value; setCreateLines(newLines);
+        const newLines = [...createLines];
+        newLines[idx] = { ...newLines[idx], [field]: value } as LineItem;
+        setCreateLines(newLines);
     };
 
     const tabStyle = (id: string) => ({
@@ -274,7 +289,7 @@ export default function InvoicesPage() {
                                 <label style={labelStyle}>Project</label>
                                 <select value={createProject} onChange={e => setCreateProject(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
                                     <option value="">Select project...</option>
-                                    {(projects as any[]).map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                    {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                                 </select>
                             </div>
                             <div>
@@ -321,7 +336,7 @@ export default function InvoicesPage() {
                             <button onClick={() => setShowGenerate(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><X size={18} /></button>
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                            <div><label style={labelStyle}>Project</label><select value={genProject} onChange={e => setGenProject(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}><option value="">Select project...</option>{(projects as any[]).map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+                            <div><label style={labelStyle}>Project</label><select value={genProject} onChange={e => setGenProject(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}><option value="">Select project...</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                                 <div><label style={labelStyle}>From</label><input type="date" value={genFromDate} onChange={e => setGenFromDate(e.target.value)} style={inputStyle} /></div>
                                 <div><label style={labelStyle}>To</label><input type="date" value={genToDate} onChange={e => setGenToDate(e.target.value)} style={inputStyle} /></div>
@@ -347,7 +362,7 @@ export default function InvoicesPage() {
                         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                             <div><label style={{ ...labelStyle, marginBottom: "8px" }}>Select Projects</label>
                                 <div style={{ maxHeight: "180px", overflow: "auto", display: "flex", flexDirection: "column", gap: "4px" }}>
-                                    {(projects as any[]).map((p: any) => {
+                                    {projects.map((p) => {
                                         const sel = batchProjects.includes(p.id);
                                         return <button key={p.id} onClick={() => setBatchProjects(sel ? batchProjects.filter(id => id !== p.id) : [...batchProjects, p.id])} style={{ padding: "8px 12px", borderRadius: "6px", border: sel ? "2px solid var(--accent-primary)" : "1px solid var(--border-primary)", background: sel ? "rgba(176,122,74,0.04)" : "var(--bg-card)", cursor: "pointer", textAlign: "left", fontSize: "12px", color: sel ? "var(--accent-primary)" : "var(--text-secondary)", fontWeight: sel ? 500 : 400, display: "flex", alignItems: "center", gap: "8px" }}>
                                             <div style={{ width: "16px", height: "16px", borderRadius: "4px", border: sel ? "2px solid var(--accent-primary)" : "1px solid var(--border-secondary)", display: "flex", alignItems: "center", justifyContent: "center", background: sel ? "var(--accent-primary)" : "transparent" }}>{sel && <CheckCircle2 size={10} style={{ color: "white" }} />}</div>{p.name}

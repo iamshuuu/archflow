@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, type TRPCContext } from "../trpc";
+
+async function requireCurrentUser(ctx: TRPCContext) {
+    const email = ctx.session?.user?.email;
+    if (!email) return null;
+    return ctx.db.user.findUnique({ where: { email } });
+}
 
 export const notificationRouter = router({
     list: protectedProcedure
@@ -26,6 +32,10 @@ export const notificationRouter = router({
     markRead: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
+            const user = await requireCurrentUser(ctx);
+            if (!user) return;
+            const notification = await ctx.db.notification.findFirst({ where: { id: input.id, userId: user.id }, select: { id: true } });
+            if (!notification) return;
             return ctx.db.notification.update({
                 where: { id: input.id },
                 data: { read: true },

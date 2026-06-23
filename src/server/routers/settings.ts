@@ -1,13 +1,19 @@
 import { z } from "zod";
-import { router, protectedProcedure, adminProcedure } from "../trpc";
+import { router, protectedProcedure, adminProcedure, type TRPCContext } from "../trpc";
+
+async function requireCurrentUserId(ctx: TRPCContext) {
+    const userId = (ctx.session?.user as { id?: string } | undefined)?.id;
+    if (!userId) throw new Error("User not found");
+    const user = await ctx.db.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error("User not found");
+    return user;
+}
 
 export const settingsRouter = router({
     // ─── Organization Settings ───
 
     get: protectedProcedure.query(async ({ ctx }) => {
-        const userId = (ctx.session.user as any).id;
-        const user = await ctx.db.user.findUnique({ where: { id: userId } });
-        if (!user) return null;
+        const user = await requireCurrentUserId(ctx);
         return ctx.db.organization.findUnique({ where: { id: user.orgId } });
     }),
 
@@ -33,9 +39,7 @@ export const settingsRouter = router({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const userId = (ctx.session.user as any).id;
-            const user = await ctx.db.user.findUnique({ where: { id: userId } });
-            if (!user) throw new Error("User not found");
+            const user = await requireCurrentUserId(ctx);
             return ctx.db.organization.update({
                 where: { id: user.orgId },
                 data: input,
@@ -45,18 +49,14 @@ export const settingsRouter = router({
     // ─── Time Off Policies ───
 
     getTimeOffPolicies: protectedProcedure.query(async ({ ctx }) => {
-        const userId = (ctx.session.user as any).id;
-        const user = await ctx.db.user.findUnique({ where: { id: userId } });
-        if (!user) return [];
+        const user = await requireCurrentUserId(ctx);
         return ctx.db.timeOffPolicy.findMany({ where: { orgId: user.orgId } });
     }),
 
     createTimeOffPolicy: adminProcedure
         .input(z.object({ name: z.string(), type: z.string(), daysPerYear: z.number() }))
         .mutation(async ({ ctx, input }) => {
-            const userId = (ctx.session.user as any).id;
-            const user = await ctx.db.user.findUnique({ where: { id: userId } });
-            if (!user) throw new Error("User not found");
+            const user = await requireCurrentUserId(ctx);
             return ctx.db.timeOffPolicy.create({ data: { ...input, orgId: user.orgId } });
         }),
 
@@ -69,18 +69,14 @@ export const settingsRouter = router({
     // ─── Holidays ───
 
     getHolidays: protectedProcedure.query(async ({ ctx }) => {
-        const userId = (ctx.session.user as any).id;
-        const user = await ctx.db.user.findUnique({ where: { id: userId } });
-        if (!user) return [];
+        const user = await requireCurrentUserId(ctx);
         return ctx.db.holiday.findMany({ where: { orgId: user.orgId }, orderBy: { date: "asc" } });
     }),
 
     createHoliday: adminProcedure
         .input(z.object({ name: z.string(), date: z.string() }))
         .mutation(async ({ ctx, input }) => {
-            const userId = (ctx.session.user as any).id;
-            const user = await ctx.db.user.findUnique({ where: { id: userId } });
-            if (!user) throw new Error("User not found");
+            const user = await requireCurrentUserId(ctx);
             return ctx.db.holiday.create({ data: { ...input, orgId: user.orgId } });
         }),
 
@@ -93,9 +89,7 @@ export const settingsRouter = router({
     // ─── Default Roles (billing rates) ───
 
     getDefaultRoles: protectedProcedure.query(async ({ ctx }) => {
-        const userId = (ctx.session.user as any).id;
-        const user = await ctx.db.user.findUnique({ where: { id: userId } });
-        if (!user) return [];
+        const user = await requireCurrentUserId(ctx);
         return ctx.db.defaultRole.findMany({ where: { orgId: user.orgId } });
     }),
 
@@ -108,9 +102,7 @@ export const settingsRouter = router({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const userId = (ctx.session.user as any).id;
-            const user = await ctx.db.user.findUnique({ where: { id: userId } });
-            if (!user) throw new Error("User not found");
+            const user = await requireCurrentUserId(ctx);
             return ctx.db.defaultRole.create({ data: { ...input, orgId: user.orgId } });
         }),
 

@@ -2,6 +2,13 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compareSync } from "bcryptjs";
 import { db } from "@/lib/db";
+import type { JWT } from "next-auth/jwt";
+import type { Session } from "next-auth";
+
+type CredentialsInput = {
+    email?: string;
+    password?: string;
+};
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
     session: { strategy: "jwt" },
@@ -12,15 +19,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 email: { label: "Email", type: "email" },
                 password: { label: "Password", type: "password" },
             },
-            async authorize(credentials: any) {
-                if (!credentials?.email || !credentials?.password) return null;
-
+            async authorize(credentials) {
+                const typed = credentials as CredentialsInput | undefined;
+                if (!typed?.email || !typed?.password) return null;
                 const user = await db.user.findUnique({
-                    where: { email: credentials.email as string },
+                    where: { email: typed.email },
                 });
                 if (!user) return null;
 
-                const valid = compareSync(credentials.password as string, user.passwordHash);
+                const valid = compareSync(typed.password, user.passwordHash);
                 if (!valid) return null;
 
                 return { id: user.id, name: user.name, email: user.email, role: user.role };
@@ -28,17 +35,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }),
     ],
     callbacks: {
-        async jwt({ token, user }: any) {
+        async jwt({ token, user }: { token: JWT & { role?: string; id?: string }; user?: { role?: string; id?: string } | null }) {
             if (user) {
                 token.role = user.role;
                 token.id = user.id;
             }
             return token;
         },
-        async session({ session, token }: any) {
+        async session({ session, token }: { session: Session & { user?: { name?: string | null; email?: string | null; image?: string | null; role?: string; id?: string } }; token: JWT & { role?: string; id?: string } }) {
             if (session.user) {
-                session.user.role = token.role;
-                session.user.id = token.id;
+                session.user = {
+                    ...session.user,
+                    role: token.role,
+                    id: token.id,
+                };
             }
             return session;
         },

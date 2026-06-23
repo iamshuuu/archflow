@@ -1,5 +1,7 @@
 # ArchFlow
 
+> Handover note: see `.env.example` for required environment variables. Use `prisma/migrations` to provision a fresh PostgreSQL database.
+
 > **Design more. Manage less.**
 >
 > A professional-grade practice management platform for architecture & engineering firms — manage projects, track time, control budgets, invoice clients, and plan resources.
@@ -120,7 +122,7 @@ A fully designed marketing site with animated hero section, interactive feature 
 | **Icons** | Lucide React | Consistent icon library |
 | **API** | tRPC v11 | Type-safe RPC between client and server |
 | **Data Fetching** | TanStack React Query v5 | Server state, caching, mutations |
-| **Database** | SQLite (via Prisma) | Local dev, swap to PostgreSQL for prod |
+| **Database** | PostgreSQL (via Prisma) | Production database, clean migration history |
 | **ORM** | Prisma v5 | Type-safe queries, migrations, seeding |
 | **Auth** | NextAuth v5 (Auth.js) | Credentials provider, JWT sessions |
 | **Validation** | Zod v4 | Input validation on all tRPC procedures |
@@ -133,9 +135,10 @@ A fully designed marketing site with animated hero section, interactive feature 
 ```
 archflow/
 ├── prisma/
-│   ├── schema.prisma          # 8 models, SQLite datasource
-│   ├── seed.ts                # Demo data seeder
-│   └── dev.db                 # SQLite database (gitignored)
+│   ├── schema.prisma          # Prisma schema
+│   ├── migrations/           # Active PostgreSQL migrations
+│   ├── migrations_sqlite_archive/  # Old SQLite migration history archive
+│   └── seed.ts                # Demo data seeder
 │
 ├── src/
 │   ├── app/
@@ -260,9 +263,12 @@ npm install
 # Set up environment variables
 cp .env.example .env
 # Edit .env and set:
-#   DATABASE_URL="file:./dev.db"
+#   DATABASE_URL="postgresql://postgres:postgres@localhost:5432/archflow?schema=public"
 #   NEXTAUTH_SECRET="your-secret-key"
 #   NEXTAUTH_URL="http://localhost:3000"
+
+# Start PostgreSQL locally
+docker compose up -d db
 
 # Initialize the database
 npx prisma migrate dev --name init
@@ -289,7 +295,7 @@ All client-server communication uses **tRPC v11** for end-to-end type safety. No
 Client (React)          Server (Node.js)
     │                        │
     │  trpc.project.list()   │
-    ├───────────────────────→│  → Prisma query → SQLite
+    ├───────────────────────→│  → Prisma query → PostgreSQL
     │                        │
     │  ← typed response ←   │
     │                        │

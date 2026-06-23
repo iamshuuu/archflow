@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X } from "lucide-react";
@@ -47,7 +48,7 @@ export default function Navbar() {
                 }}
             >
                 {/* Logo */}
-                <a href="/" style={{ display: "flex", alignItems: "center", gap: "10px", textDecoration: "none" }}>
+                <Link href="/" style={{ display: "flex", alignItems: "center", gap: "10px", textDecoration: "none" }}>
                     <div
                         style={{
                             width: "34px",
@@ -67,7 +68,7 @@ export default function Navbar() {
                     <span style={{ fontSize: "20px", fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-primary)", fontFamily: "var(--font-dm-serif), Georgia, serif" }}>
                         ArchFlow
                     </span>
-                </a>
+                </Link>
 
                 {/* Desktop links */}
                 <div style={{ display: "flex", alignItems: "center", gap: "36px" }} className="hidden md:flex">
@@ -93,15 +94,15 @@ export default function Navbar() {
 
                 {/* Desktop CTAs */}
                 <div style={{ display: "flex", alignItems: "center", gap: "16px" }} className="hidden md:flex">
-                    <a
+                    <Link
                         href="/login"
                         style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-tertiary)", textDecoration: "none", transition: "color 0.3s" }}
                         onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
                         onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-tertiary)")}
                     >
                         Log in
-                    </a>
-                    <a
+                    </Link>
+                    <Link
                         href="/signup"
                         style={{
                             fontSize: "13px",
@@ -125,7 +126,7 @@ export default function Navbar() {
                         }}
                     >
                         Get Started
-                    </a>
+                    </Link>
                 </div>
 
                 {/* Mobile */}
@@ -157,10 +158,10 @@ export default function Navbar() {
                                 </a>
                             ))}
                             <div style={{ borderTop: "1px solid var(--border-primary)", paddingTop: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-                                <a href="/login" style={{ fontSize: "16px", color: "var(--text-secondary)", textDecoration: "none" }}>Log in</a>
-                                <a href="/signup" style={{ fontSize: "13px", fontWeight: 500, color: "white", textAlign: "center", padding: "14px", borderRadius: "4px", background: "var(--accent-primary)", letterSpacing: "0.04em", textTransform: "uppercase", textDecoration: "none" }}>
+                                <Link href="/login" style={{ fontSize: "16px", color: "var(--text-secondary)", textDecoration: "none" }}>Log in</Link>
+                                <Link href="/signup" style={{ fontSize: "13px", fontWeight: 500, color: "white", textAlign: "center", padding: "14px", borderRadius: "4px", background: "var(--accent-primary)", letterSpacing: "0.04em", textTransform: "uppercase", textDecoration: "none" }}>
                                     Get Started
-                                </a>
+                                </Link>
                             </div>
                         </div>
                     </motion.div>
